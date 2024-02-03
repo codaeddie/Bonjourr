@@ -1,3 +1,14 @@
+# I'm showing off my custom page. Not hosted or anything, just using the browser extension. 
+### Todo: 
+- [ ] Add Modern Quotes
+- [ ] Create Basic Stopwatch
+- [ ] upload images 
+![image](https://github.com/codaeddie/Bonjourr/assets/50470764/3bd0c89e-0c6f-436d-89c6-af86b7d1fd19)
+
+
+---
+
+
 <h1 align="center">
   <a href="https://bonjourr.fr"><img src="https://raw.githubusercontent.com/victrme/Bonjourr/master/src/assets/bonjourr.png" width="50%" alt="Bonjourr's website"></a>
 </h1>
