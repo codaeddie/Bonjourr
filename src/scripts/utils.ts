@@ -1,7 +1,7 @@
-import { MAIN_API, FALLBACK_API } from './defaults'
+import { MAIN_API, FALLBACK_API, ENVIRONNEMENT } from './defaults'
 import suntime from './utils/suntime'
 
-import type { Sync } from './types/sync'
+const apiList = ENVIRONNEMENT === 'TEST' ? ['http://localhost:8787'] : shuffledAPIUrls()
 
 function shuffledAPIUrls(): string[] {
 	return [
@@ -13,10 +13,13 @@ function shuffledAPIUrls(): string[] {
 }
 
 export async function apiWebSocket(path: string): Promise<WebSocket | undefined> {
-	for (const url of shuffledAPIUrls()) {
+	for (let url of apiList) {
 		try {
-			const socket = new WebSocket(url.replace('https://', 'wss://') + path)
+			if (ENVIRONNEMENT === 'TEST') {
+				url = 'wss://bonjourr-apis.victr.workers.dev'
+			}
 
+			const socket = new WebSocket(url.replace('https://', 'wss://') + path)
 			const isOpened = await new Promise((resolve) => {
 				socket.onopen = () => resolve(true)
 				socket.onerror = () => resolve(false)
@@ -33,7 +36,7 @@ export async function apiWebSocket(path: string): Promise<WebSocket | undefined>
 }
 
 export async function apiFetch(path: string): Promise<Response | undefined> {
-	for (const url of shuffledAPIUrls()) {
+	for (const url of apiList) {
 		try {
 			return await fetch(url + path)
 		} catch (error) {
@@ -60,7 +63,7 @@ export function periodOfDay(time?: number) {
 	// noon & evening are + /- 60 min around sunrise/set
 
 	const mins = minutator(time ? new Date(time) : new Date())
-	const { sunrise, sunset } = suntime
+	const { sunrise, sunset } = suntime()
 
 	if (mins >= 0 && mins <= sunrise - 60) return 'night'
 	if (mins <= sunrise + 60) return 'noon'
@@ -71,15 +74,68 @@ export function periodOfDay(time?: number) {
 	return 'day'
 }
 
-export function bundleLinks(data: Sync): Link[] {
+export const freqControl = {
+	set: () => {
+		return new Date().getTime()
+	},
+
+	get: (every: string, last: number) => {
+		const nowDate = new Date()
+		const lastDate = new Date(last || 0)
+		const changed = {
+			date: nowDate.getDate() !== lastDate.getDate(),
+			hour: nowDate.getHours() !== lastDate.getHours(),
+		}
+
+		switch (every) {
+			case 'day':
+				return changed.date
+
+			case 'hour':
+				return changed.date || changed.hour
+
+			case 'tabs':
+				return true
+
+			case 'pause':
+				return last === 0
+
+			case 'period': {
+				return last === 0 ? true : periodOfDay() !== periodOfDay(+lastDate) || false
+			}
+
+			default:
+				return false
+		}
+	},
+}
+
+export function bundleLinks(data: Sync.Storage): Links.Link[] {
 	// 1.13.0: Returns an array of found links in storage
-	let res: Link[] = []
+	let res: Links.Link[] = []
 	Object.entries(data).map(([key, val]) => {
-		if (key.length === 11 && key.startsWith('links')) res.push(val as Link)
+		if (key.length === 11 && key.startsWith('links')) res.push(val as Links.Link)
 	})
 
-	res.sort((a: Link, b: Link) => a.order - b.order)
 	return res
+}
+
+export function linksDataMigration(data: Sync.Storage): Sync.Storage {
+	if (data?.linktabs) {
+		return data
+	}
+
+	const notfoundicon = 'data:image/svg+xml;base64,PHN2ZyBoZWlnaHQ9IjI2MiIgdmlld0JveD0iMC' // ...
+	const list = (bundleLinks(data) as Links.Elem[]).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+
+	list.forEach((link) => {
+		if (link.icon?.startsWith(notfoundicon)) {
+			link.icon = MAIN_API + '/favicon/blob/'
+			data[link._id] = link
+		}
+	})
+
+	return data
 }
 
 export const inputThrottle = (elem: HTMLInputElement, time = 800) => {
@@ -103,13 +159,14 @@ export function turnRefreshButton(button: HTMLSpanElement, canTurn: boolean) {
 	)
 }
 
-export function closeEditLink() {
-	const domedit = document.querySelector('#editlink')
-	if (!domedit) return
+export function isEvery(freq = ''): freq is Frequency {
+	const every: Frequency[] = ['tabs', 'hour', 'day', 'period', 'pause']
+	return every.includes(freq as Frequency)
+}
 
-	domedit?.classList.add('hiding')
-	document.querySelectorAll('#linkblocks img').forEach((img) => img?.classList.remove('selected'))
-	setTimeout(() => {
-		domedit ? domedit.setAttribute('class', '') : ''
-	}, 200)
+// goodbye typescript, you will be missed
+export function getHTMLTemplate<T>(id: string, selector: string): T {
+	const template = document.getElementById(id) as HTMLTemplateElement
+	const clone = template?.content.cloneNode(true) as Element
+	return clone?.querySelector(selector) as T
 }

@@ -1,18 +1,13 @@
 import langList from './langs'
-import type { Local } from './types/local'
-import type { Sync } from './types/sync'
 
-export const CURRENT_VERSION = '1.18.4'
+export const CURRENT_VERSION = '19.2.3'
 
-export const MAIN_API = 'https://api.bonjourr.lol'
+export const MAIN_API = 'https://api.bonjourr.fr'
 
-export const FALLBACK_API = [
-	'https://bonjourr-apis.victr.me',
-	'https://bonjourr-apis.victr.workers.dev',
-	'https://bonjourr-apis.victrme.workers.dev',
-	'https://api.bonjourr.fr',
-	'https://bonjourr-apis.bonjourr.workers.dev',
-]
+export const FALLBACK_API = ['https://bonjourr-apis.victr.workers.dev', 'https://bonjourr-apis.victrme.workers.dev']
+
+//@ts-expect-error
+export const ENVIRONNEMENT: 'PROD' | 'DEV' | 'TEST' = ENV // defined by esbuild during build step
 
 export const SYSTEM_OS = window.navigator.appVersion.includes('Macintosh')
 	? 'mac'
@@ -37,7 +32,9 @@ export const PLATFORM =
 export const BROWSER =
 	window.navigator.userAgent.toLowerCase().indexOf('edg/' || 'edge') > -1
 		? 'edge'
-		: window.navigator.userAgent.toLowerCase().indexOf('chrome') > -1
+		: window.navigator?.userAgentData?.brands.some((b) => b.brand === 'Opera')
+		? 'opera'
+		: window.navigator?.userAgentData?.brands.some((b) => b.brand === 'Chromium')
 		? 'chrome'
 		: window.navigator.userAgent.toLowerCase().indexOf('firefox') > -1
 		? 'firefox'
@@ -58,8 +55,25 @@ const DEFAULT_LANG = (() => {
 	return 'en'
 })()
 
-export const SYNC_DEFAULT: Sync = {
-	about: { browser: PLATFORM, version: CURRENT_VERSION },
+export const SEARCHBAR_ENGINES = <const>[
+	'google',
+	'ddg',
+	'startpage',
+	'qwant',
+	'yahoo',
+	'bing',
+	'brave',
+	'ecosia',
+	'lilo',
+	'baidu',
+	'custom',
+]
+
+export const SYNC_DEFAULT: Sync.Storage = {
+	about: {
+		browser: PLATFORM,
+		version: CURRENT_VERSION,
+	},
 	showall: false,
 	lang: DEFAULT_LANG,
 	dark: 'system',
@@ -70,19 +84,25 @@ export const SYNC_DEFAULT: Sync = {
 	pagewidth: 1600,
 	time: true,
 	main: true,
-	usdate: false,
+	dateformat: 'eu',
 	background_blur: 15,
 	background_bright: 0.8,
 	background_type: 'unsplash',
 	quicklinks: true,
+	syncbookmarks: undefined,
+	textShadow: 0.2,
+	announcements: 'major',
+	review: 0,
+	css: '',
+	hide: {},
 	linkstyle: 'large',
 	linknewtab: false,
 	linksrow: 6,
-	textShadow: 0.2,
-	reviewPopup: 0,
-	cssHeight: 80,
-	css: '',
-	hide: {},
+	linktabs: {
+		active: false,
+		selected: 0,
+		titles: [''],
+	},
 	clock: {
 		size: 1,
 		ampm: false,
@@ -96,8 +116,8 @@ export const SYNC_DEFAULT: Sync = {
 		every: 'hour',
 		collection: '',
 		lastCollec: 'day',
-		pausedImage: null,
-		time: Date.now(),
+		pausedImage: undefined,
+		time: undefined,
 	},
 	weather: {
 		ccode: undefined,
@@ -112,7 +132,6 @@ export const SYNC_DEFAULT: Sync = {
 	notes: {
 		on: false,
 		width: 40,
-		text: null,
 		opacity: 0.1,
 		align: 'left',
 	},
@@ -131,13 +150,12 @@ export const SYNC_DEFAULT: Sync = {
 		type: 'classic',
 		frequency: 'day',
 		last: 1650516688,
-		userlist: [],
 	},
 	font: {
-		url: '',
 		family: '',
 		size: '14',
-		availWeights: [],
+		system: true,
+		weightlist: [],
 		weight: SYSTEM_OS === 'windows' ? '400' : '300',
 	},
 	move: {
@@ -167,9 +185,9 @@ export const SYNC_DEFAULT: Sync = {
 	},
 }
 
-export const LOCAL_DEFAULT: Local = {
+export const LOCAL_DEFAULT: Local.Storage = {
 	userQuoteSelection: 0,
-	translations: {},
+	translations: undefined,
 	selectedId: '',
 	idsList: [],
 	quotesCache: [],

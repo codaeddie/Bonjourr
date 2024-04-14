@@ -1,6 +1,3 @@
-**/style.css
-**/style.css.map
-
 .DS_Store
 config.codekit3
 .directory
@@ -12,3 +9,7 @@ env.json
 
 node_modules/
 release/
+test-results
+playwright-report
+playwright/.cache
+.wrangler

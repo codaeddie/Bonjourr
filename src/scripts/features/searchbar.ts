@@ -1,17 +1,16 @@
 import { apiWebSocket, stringMaxSize } from '../utils'
+import { SEARCHBAR_ENGINES } from '../defaults'
 import { eventDebounce } from '../utils/debounce'
 import { tradThis } from '../utils/translations'
 import errorMessage from '../utils/errormessage'
-import superinput from '../utils/superinput'
 import storage from '../storage'
 import parse from '../utils/parse'
-
-import type { Searchbar } from '../types/sync'
 
 type SearchbarUpdate = {
 	engine?: string
 	opacity?: string
 	newtab?: boolean
+	width?: string
 	suggestions?: boolean
 	placeholder?: string
 	request?: HTMLInputElement
@@ -25,7 +24,6 @@ type Suggestions = {
 
 type UndefinedElement = Element | undefined | null
 
-const requestInput = superinput('i_sbrequest')
 let socket: WebSocket | undefined
 
 const domsuggestions = document.getElementById('sb-suggestions') as HTMLUListElement | undefined
@@ -40,12 +38,13 @@ const setRequest = (value = '') => domcontainer?.setAttribute('data-request', st
 const setNewtab = (value = false) => domcontainer?.setAttribute('data-newtab', value.toString())
 const setSuggestions = (value = true) => domcontainer?.setAttribute('data-suggestions', value.toString())
 const setPlaceholder = (value = '') => domsearchbar?.setAttribute('placeholder', value)
+const setWidth = (value = 30) => document.documentElement.style.setProperty('--searchbar-width', value.toString() + 'em')
 const setOpacity = (value = 0.1) => {
 	document.documentElement.style.setProperty('--searchbar-background-alpha', value.toString())
 	document.getElementById('sb_container')?.classList.toggle('opaque', value > 0.4)
 }
 
-export default function searchbar(init: Searchbar | null, update?: SearchbarUpdate) {
+export default function searchbar(init?: Sync.Searchbar, update?: SearchbarUpdate) {
 	if (update) {
 		updateSearchbar(update)
 		return
@@ -53,6 +52,7 @@ export default function searchbar(init: Searchbar | null, update?: SearchbarUpda
 
 	try {
 		display(init?.on)
+		setWidth(init?.width)
 		setEngine(init?.engine)
 		setRequest(init?.request)
 		setNewtab(init?.newtab)
@@ -64,19 +64,20 @@ export default function searchbar(init: Searchbar | null, update?: SearchbarUpda
 		emptyButton?.addEventListener('click', removeInputText)
 		domcontainer?.addEventListener('submit', submitSearch)
 		domsearchbar?.addEventListener('input', handleUserInput)
+		document.addEventListener('keydown', searchbarShortcut)
 	} catch (e) {
 		errorMessage(e)
 	}
 }
 
-async function updateSearchbar({ engine, newtab, opacity, placeholder, request, suggestions }: SearchbarUpdate) {
+async function updateSearchbar({ engine, newtab, opacity, placeholder, request, suggestions, width }: SearchbarUpdate) {
 	const { searchbar } = await storage.sync.get('searchbar')
 
 	if (!searchbar) {
 		return
 	}
 
-	if (engine) {
+	if (isValidEngine(engine)) {
 		document.getElementById('searchbar_request')?.classList.toggle('shown', engine === 'custom')
 		searchbar.engine = engine
 		setEngine(engine)
@@ -94,7 +95,12 @@ async function updateSearchbar({ engine, newtab, opacity, placeholder, request, 
 
 	if (opacity !== undefined) {
 		searchbar.opacity = parseFloat(opacity)
-		setOpacity(parseFloat(opacity))
+		setOpacity(searchbar.opacity)
+	}
+
+	if (width !== undefined) {
+		searchbar.width = parseInt(width)
+		setWidth(searchbar.width)
 	}
 
 	if (placeholder !== undefined) {
@@ -104,7 +110,6 @@ async function updateSearchbar({ engine, newtab, opacity, placeholder, request, 
 
 	if (request) {
 		if (!request.value.includes('%s')) {
-			requestInput.warn('"%s" not found')
 			return
 		}
 
@@ -131,7 +136,7 @@ function isValidURL(string: string): boolean {
 }
 
 function createSearchURL(val: string): string {
-	const URLs = {
+	const URLs: { [key in Sync.Searchbar['engine']]: string } = {
 		google: 'https://www.google.com/search?q=%s',
 		ddg: 'https://duckduckgo.com/?q=%s',
 		startpage: 'https://www.startpage.com/do/search?query=%s',
@@ -142,20 +147,15 @@ function createSearchURL(val: string): string {
 		ecosia: 'https://www.ecosia.org/search?q=%s',
 		lilo: 'https://search.lilo.org/?q=%s',
 		baidu: 'https://www.baidu.com/s?wd=%s',
+		custom: domcontainer?.dataset.request || '',
 	}
 
-	let searchURL = 'https://www.google.com/search?q=%s'
+	let searchURL = URLs.google
 	const engine = domcontainer?.dataset.engine || 'google'
-	const request = domcontainer?.dataset.request || ''
 
-	searchURL = tradThis(engine)
-
-	if (!searchURL.includes('%s') && engine in URLs) {
-		searchURL = URLs[engine as keyof typeof URLs]
-	}
-
-	if (engine === 'custom') {
-		searchURL = request
+	if (isValidEngine(engine)) {
+		const trad = tradThis(engine)
+		searchURL = trad.includes('%s') ? trad : URLs[engine]
 	}
 
 	return searchURL.replace('%s', encodeURIComponent(val ?? ''))
@@ -414,4 +414,19 @@ function focusSearchbar() {
 	if (dombuttons?.classList.contains('shown') === false) {
 		domsearchbar?.focus()
 	}
+}
+
+function searchbarShortcut(event: KeyboardEvent) {
+	const target = event.target as Element
+	const fromBody = target.tagName === 'BODY'
+
+	if (fromBody && event.key === '/') {
+		domsearchbar?.focus()
+		domsearchbar?.select()
+		event.preventDefault()
+	}
+}
+
+function isValidEngine(s = ''): s is Sync.Searchbar['engine'] {
+	return SEARCHBAR_ENGINES.includes(s as any)
 }

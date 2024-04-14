@@ -31,7 +31,7 @@ Escolhemos a dedo algumas das mais belas fotos do Unsplash para que os teus novo
 O Bonjourr é construído com JavaScript original e otimizado para o melhor desempenho possível.
 
 🔎 Barra de pesquisa
-A barra de pesquisa integrada do Bonjourr é compatível com todos os motores de pesquisa. Sim, todos eles! Isso inclui os habituais Google, Bing, DuckDuckGo, Yahoo, Startpage assim como outros, como Ecosia, Lilo e Qwant. Se quiseres, podes até mesmo adicionar o teu próprio mecanismo de pesquisa personalizado.
+A barra de pesquisa integrada do Bonjourr é compatível com todos os motores de pesquisa. Sim, todos eles! Se quiseres, podes até mesmo adicionar o teu próprio mecanismo de pesquisa personalizado.
 
 🕰 Relógio analógico
 O relógio predefinido do Bonjourr foi concebido para se assemelhar ao que existe no iPhone e noutros dispositivos iOS. Mas se quiseres algo mais exótico, podes substituí-lo por um relógio analógico e personalizá-lo como quiseres.
@@ -57,4 +57,4 @@ Tens uma ideia específica em mente? O Bonjourr ajuda-te com a secção de estil
 Queres um tipos de letra específico na tua página inicial? Podes adicioná-lo facilmente graças à integração do Bonjourr com o Google Fonts.
 
 🌎 Multilingue
-Graças aos nossos incríveis colaboradores, o Bonjourr está disponível em 25 idiomas diferentes.
+Graças aos nossos incríveis colaboradores, o Bonjourr está disponível em +20 idiomas diferentes.

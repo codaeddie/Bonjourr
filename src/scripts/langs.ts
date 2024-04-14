@@ -2,6 +2,7 @@ export default {
 	en: 'English',
 	fr: 'Français',
 	sk: 'Slovenský',
+	cz: 'Čeština',
 	sv: 'Svenska',
 	pl: 'Polski',
 	pt_BR: 'Português (Brasil)',
@@ -11,6 +12,7 @@ export default {
 	ru: 'Русский',
 	zh_CN: '简体中文',
 	zh_HK: '繁體中文',
+	jp: '日本語',
 	de: 'Deutsch',
 	it: 'Italiano',
 	es_ES: 'Español',
@@ -24,4 +26,26 @@ export default {
 	sr_YU: 'Srpski (latinica)',
 	gr: 'Ελληνικά',
 	fa: 'فارسی',
+	vi: 'Tiếng Việt',
+	ar: 'العربية',
+}
+
+// is latin only if not included
+export const subsets = {
+	ar: 'arabic',
+	sk: 'latin-ext',
+	cz: 'latin-ext',
+	pl: 'latin-ext',
+	ro: 'latin-ext',
+	ru: 'cyrillic',
+	zh_CN: 'chinese-simplified',
+	zh_HK: 'chinese-traditional',
+	tr: 'latin-ext',
+	uk: 'cyrillic',
+	hu: 'latin-ext',
+	sr: 'cyrillic',
+	gr: 'greek',
+	fa: 'arabic',
+	jp: 'japanese',
+	vi: 'latin-ext',
 }

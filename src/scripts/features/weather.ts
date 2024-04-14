@@ -1,39 +1,38 @@
 import { stringMaxSize, apiFetch, minutator } from '../utils'
+import { tradThis, getLang } from '../utils/translations'
 import onSettingsLoad from '../utils/onsettingsload'
-import { tradThis } from '../utils/translations'
-import superinput from '../utils/superinput'
+import networkForm from '../utils/networkform'
 import suntime from '../utils/suntime'
 import storage from '../storage'
 
-import { Sync, Weather } from '../types/sync'
-import { LastWeather } from '../types/local'
-import { OWMCurrent, OWMOnecall } from '../types/openweathermap'
+type Weather = Weather.Sync
 
-type Coords = {
-	lat: number
-	lon: number
-}
+type LastWeather = Weather.Local
+
+type Coords = { lat: number; lon: number }
 
 type WeatherInit = {
-	sync: Sync
-	lastWeather?: LastWeather
-} | null
+	sync: Sync.Storage
+	lastWeather?: Weather.Local
+}
 
 type WeatherUpdate = {
 	forecast?: string
 	moreinfo?: string
 	provider?: string
-	units?: 'metric' | 'imperial'
+	units?: string
 	geol?: string
-	city?: string
+	city?: true
 	temp?: string
 	unhide?: true
 }
 
 let pollingInterval = 0
-const cityInput = superinput('i_city')
+const locationForm = networkForm('f_location')
+const unitForm = networkForm('f_units')
+const geolForm = networkForm('f_geol')
 
-export default function weather(init: WeatherInit, update?: WeatherUpdate) {
+export default function weather(init?: WeatherInit, update?: WeatherUpdate) {
 	if (update) {
 		updatesWeather(update)
 		return
@@ -46,7 +45,9 @@ export default function weather(init: WeatherInit, update?: WeatherUpdate) {
 	if (init) {
 		onSettingsLoad(() => {
 			handleGeolOption(init.sync.weather)
+		})
 
+		queueMicrotask(() => {
 			clearInterval(pollingInterval)
 
 			pollingInterval = setInterval(async () => {
@@ -59,34 +60,36 @@ export default function weather(init: WeatherInit, update?: WeatherUpdate) {
 }
 
 async function updatesWeather(update: WeatherUpdate) {
-	let { weather, hide } = (await storage.sync.get(['weather', 'hide'])) as Sync
+	let { weather, hide } = await storage.sync.get(['weather', 'hide'])
 	let lastWeather = (await storage.local.get('lastWeather')).lastWeather
 
 	if (!weather || !hide) {
 		return
 	}
 
-	if (update.units) {
+	if (isUnits(update.units)) {
+		unitForm.load()
 		weather.unit = update.units
 		lastWeather = (await request(weather, lastWeather)) ?? lastWeather
+		unitForm.accept()
 	}
 
-	if (update.forecast) {
+	if (isForecast(update.forecast)) {
 		weather.forecast = update.forecast
 	}
 
-	if (update.temp) {
+	if (isTemperature(update.temp)) {
 		weather.temperature = update.temp
+	}
+
+	if (isMoreinfo(update.moreinfo)) {
+		const providerdom = document.getElementById('weather_provider')
+		providerdom?.classList.toggle('shown', update.moreinfo === 'custom')
+		weather.moreinfo = update.moreinfo
 	}
 
 	if (update.provider) {
 		weather.provider = update.provider
-	}
-
-	if (update.moreinfo) {
-		const providerdom = document.getElementById('weather_provider')
-		providerdom?.classList.toggle('shown', update.moreinfo === 'custom')
-		weather.moreinfo = update.moreinfo
 	}
 
 	if (update.unhide) {
@@ -97,49 +100,71 @@ async function updatesWeather(update: WeatherUpdate) {
 	}
 
 	if (update.city) {
+		const i_city = document.getElementById('i_city') as HTMLInputElement
+		const i_ccode = document.getElementById('i_ccode') as HTMLInputElement
+		let ccode = i_ccode.value
+		let city = i_city.value
+
 		if (!navigator.onLine) {
-			cityInput.warn('No internet connection')
+			locationForm.warn('No internet connection')
 			return false
 		}
 
-		if (update.city === weather.city) {
+		if (city === weather.city) {
 			return
 		}
 
-		const i_city = document.getElementById('i_city') as HTMLInputElement
-		const i_ccode = document.getElementById('i_ccode') as HTMLInputElement
-
-		update.city = stringMaxSize(update.city, 64)
-		cityInput.load()
+		city = stringMaxSize(city, 64)
+		locationForm.load()
 
 		// don't mutate weather data before confirming that the city exists
-		const newWeather = await request({ ...weather, ccode: i_ccode.value, city: update.city }, lastWeather)
+		const currentWeather = { ...weather, ccode, city }
+		const newWeather = await request(currentWeather, lastWeather)
+		const newCity = newWeather?.approximation?.city
+		const foundCityIsDifferent = newCity !== '' && newCity !== city
+
+		if (!newWeather) {
+			locationForm.warn('Cannot reach weather service')
+			return
+		}
+
+		if (foundCityIsDifferent) {
+			locationForm.warn('Cannot find correct city')
+			return
+		}
 
 		if (newWeather) {
 			lastWeather = newWeather
-			weather.ccode = lastWeather.approximation?.ccode ?? ''
-			weather.city = lastWeather.approximation?.city ?? ''
-			i_city.setAttribute('placeholder', weather.city ?? tradThis('City'))
-			cityInput.toggle(false)
-		} else {
-			cityInput.warn('Cannot find city')
+			weather.ccode = (lastWeather.approximation?.ccode || i_ccode.value) ?? 'FR'
+			weather.city = (lastWeather.approximation?.city || city) ?? 'Paris'
+
+			locationForm.accept('i_city', weather.city ?? tradThis('City'))
+			i_city.dispatchEvent(new KeyboardEvent('input'))
 		}
 	}
 
 	if (update.geol) {
+		geolForm.load()
+
 		// Don't update if precise geolocation fails
 		if (update.geol === 'precise') {
 			if (!(await getGeolocation('precise'))) {
-				return handleGeolOption(weather)
+				geolForm.warn('Cannot get precise location')
+				return
 			}
 		}
 
-		weather.geolocation = update.geol as Weather['geolocation']
+		if (isGeolocation(update.geol)) {
+			weather.geolocation = update.geol
+		}
+
 		lastWeather = (await request(weather, lastWeather)) ?? lastWeather
+
+		geolForm.accept()
 	}
 
 	storage.sync.set({ weather })
-	handleGeolOption(weather)
+	onSettingsLoad(() => handleGeolOption(weather))
 
 	if (lastWeather) {
 		storage.local.set({ lastWeather })
@@ -219,15 +244,16 @@ async function getGeolocation(type: Weather['geolocation']): Promise<Coords | un
 }
 
 function handleGeolOption(data: Weather) {
-	const i_city = document.getElementById('i_city') as HTMLInputElement
-	const i_geol = document.getElementById('i_geol') as HTMLInputElement
-	const i_ccode = document.getElementById('i_ccode') as HTMLInputElement
-	const sett_city = document.getElementById('sett_city') as HTMLDivElement
+	const i_city = document.querySelector<HTMLInputElement>('#i_city')
+	const i_geol = document.querySelector<HTMLInputElement>('#i_geol')
+	const i_ccode = document.querySelector<HTMLInputElement>('#i_ccode')
 
-	i_geol.value = data.geolocation
-	i_ccode.value = data.ccode ?? 'FR'
-	i_city.setAttribute('placeholder', data.city ?? tradThis('City'))
-	sett_city.classList.toggle('shown', data.geolocation === 'off')
+	if (i_ccode && i_city && i_geol) {
+		i_geol.value = data?.geolocation ?? false
+		i_ccode.value = data.ccode ?? 'FR'
+		i_city.setAttribute('placeholder', data.city ?? 'Paris')
+		document.getElementById('location_options')?.classList.toggle('shown', data.geolocation === 'off')
+	}
 }
 
 async function request(data: Weather, lastWeather?: LastWeather, currentOnly?: boolean): Promise<LastWeather | undefined> {
@@ -238,12 +264,15 @@ async function request(data: Weather, lastWeather?: LastWeather, currentOnly?: b
 
 	const isKeepingCity = data.geolocation === 'off' && lastWeather?.approximation?.city === data.city
 	let coords = await getGeolocation(data.geolocation)
-	let lang = document.documentElement.getAttribute('lang')
+	let lang = getLang()
 	let queries = ''
 
 	// Openweathermap country code for traditional chinese is tw, greek is el
 	if (lang === 'zh_HK') lang = 'zh_TW'
+	if (lang === 'pt_PT') lang = 'pt'
+	if (lang === 'es_ES') lang = 'es'
 	if (lang === 'gr') lang = 'el'
+	if (lang === 'jp') lang = 'ja'
 
 	queries += '?units=' + (data.unit ?? 'metric')
 	queries += '&lang=' + lang
@@ -259,15 +288,15 @@ async function request(data: Weather, lastWeather?: LastWeather, currentOnly?: b
 
 	if (data.geolocation === 'off' && !coords) {
 		queries += '&q=' + encodeURI(data.city ?? 'Paris')
-		queries += ',' + data.ccode ?? 'FR'
+		queries += ',' + (data.ccode ?? 'FR')
 	}
 
 	//
 	// Fetch data
 
 	let response: Response | undefined
-	let onecall: OWMOnecall | undefined
-	let current: OWMCurrent | undefined
+	let onecall: Weather.API.Onecall | undefined
+	let current: Weather.API.Current | undefined
 
 	if (queries.includes('&lat') && lang === 'en') {
 		try {
@@ -288,8 +317,8 @@ async function request(data: Weather, lastWeather?: LastWeather, currentOnly?: b
 
 		try {
 			if (response?.status === 200) {
-				if (!!currentOnly) current = (await response?.json()) as OWMCurrent
-				if (!currentOnly) onecall = (await response?.json()) as OWMOnecall
+				if (!!currentOnly) current = (await response?.json()) as Weather.API.Current
+				if (!currentOnly) onecall = (await response?.json()) as Weather.API.Onecall
 			}
 		} catch (error) {
 			console.log(error)
@@ -348,7 +377,7 @@ async function request(data: Weather, lastWeather?: LastWeather, currentOnly?: b
 		forecasted_high = Math.round(Math.max(...alltemps))
 	}
 
-	suntime.update(sunrise, sunset)
+	suntime(sunrise, sunset)
 
 	return {
 		timestamp: Math.floor(new Date().getTime() / 1000),
@@ -370,32 +399,32 @@ async function request(data: Weather, lastWeather?: LastWeather, currentOnly?: b
 }
 
 function displayWeather(data: Weather, lastWeather: LastWeather) {
+	const useSinograms = getLang().includes('zh') || getLang().includes('jp')
 	const current = document.getElementById('current')
 	const tempContainer = document.getElementById('tempContainer')
 	const weatherdom = document.getElementById('weather')
+	const dot = useSinograms ? '。' : '. '
 	const date = new Date()
 
 	const handleDescription = () => {
-		const desc = lastWeather.description
 		const feels = Math.floor(lastWeather.feels_like)
 		const actual = Math.floor(lastWeather.temp)
+		const maintemp = data.temperature === 'feelslike' ? feels : actual
+		let tempReport = ''
 
-		let tempText = `${tradThis('It is currently')} ${actual}°`
-
-		if (data.temperature === 'feelslike') {
-			tempText = `${tradThis('It currently feels like')} ${feels}°`
-		}
-
-		// Todo: wtf ?
-		if (data.temperature === 'both') {
-			tempText = `${tradThis('It currently feels like')} ${feels}°`
-		}
+		if (data.temperature === 'actual') tempReport = tradThis('It is currently <temp1>°')
+		if (data.temperature === 'feelslike') tempReport = tradThis('It currently feels like <temp2>°')
+		if (data.temperature === 'both') tempReport = tradThis('It is currently <temp1>° and feels like <temp2>°')
 
 		const iconText = tempContainer?.querySelector('p')
+		const weatherReport = lastWeather.description[0].toUpperCase() + lastWeather.description.slice(1)
+
+		tempReport = tempReport.replace('<temp1>', actual.toString())
+		tempReport = tempReport.replace('<temp2>', feels.toString())
 
 		if (current && iconText) {
-			current.textContent = `${desc[0].toUpperCase() + desc.slice(1)}. ${tempText}`
-			iconText.textContent = actual + '°'
+			current.textContent = weatherReport + dot + tempReport
+			iconText.textContent = `${maintemp}°`
 		}
 	}
 
@@ -428,21 +457,26 @@ function displayWeather(data: Weather, lastWeather: LastWeather) {
 		const icon = document.getElementById('weather-icon') as HTMLImageElement
 
 		const now = minutator(new Date())
-		const { sunrise, sunset } = suntime
-		const timeOfDay = now < sunrise || now > sunset ? 'night' : 'day'
-		const iconSrc = `src/assets/weather/${timeOfDay}/${filename}.png`
+		const { sunrise, sunset } = suntime()
+		const daytime = now < sunrise || now > sunset ? 'night' : 'day'
+		const iconSrc = `src/assets/weather/${daytime}/${filename}.svg`
 
 		icon.src = iconSrc
 	}
 
 	const handleForecastData = () => {
-		let day = tradThis(date.getHours() > getSunsetHour() ? 'tomorrow' : 'today')
-		day = day !== '' ? ' ' + day : '' // Only day change on translations that support it
-
 		const forecastdom = document.getElementById('forecast')
+		const day = date.getHours() > getSunsetHour() ? 'tomorrow' : 'today'
+		let string = ''
+
+		if (day === 'today') string = tradThis('with a high of <temp1>° today')
+		if (day === 'tomorrow') string = tradThis('with a high of <temp1>° tomorrow')
+
+		string = string.replace('<temp1>', lastWeather.forecasted_high.toString())
+		string = string + dot
 
 		if (forecastdom) {
-			forecastdom.textContent = `${tradThis('with a high of')} ${lastWeather.forecasted_high}°${day}.`
+			forecastdom.textContent = string
 		}
 	}
 
@@ -494,6 +528,31 @@ function handleForecastDisplay(forecast: string) {
 
 function getSunsetHour(): number {
 	const d = new Date()
-	d.setHours(Math.round(suntime.sunset / 60))
+	d.setHours(Math.round(suntime().sunset / 60))
 	return d.getHours()
+}
+
+function isUnits(str = ''): str is Weather.Unit {
+	const units: Weather.Unit[] = ['metric', 'imperial']
+	return units.includes(str as Weather.Unit)
+}
+
+function isForecast(str = ''): str is Weather.Forecast {
+	const forecasts: Weather.Forecast[] = ['auto', 'always', 'never']
+	return forecasts.includes(str as Weather.Forecast)
+}
+
+function isMoreinfo(str = ''): str is Weather.MoreInfo {
+	const moreinfos: Weather.MoreInfo[] = ['none', 'msnw', 'yhw', 'windy', 'custom']
+	return moreinfos.includes(str as Weather.MoreInfo)
+}
+
+function isTemperature(str = ''): str is Weather.Temperature {
+	const temps: Weather.Temperature[] = ['actual', 'feelslike', 'both']
+	return temps.includes(str as Weather.Temperature)
+}
+
+function isGeolocation(str = ''): str is Weather.Geolocation {
+	const geol: Weather.Geolocation[] = ['precise', 'approximate', 'off']
+	return geol.includes(str as Weather.Geolocation)
 }

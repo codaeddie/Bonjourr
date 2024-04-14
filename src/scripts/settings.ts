@@ -1,141 +1,155 @@
-import storage from './storage'
 import clock from './features/clock'
 import notes from './features/notes'
 import quotes from './features/quotes'
 import weather from './features/weather'
 import searchbar from './features/searchbar'
-import customFont from './features/fonts'
 import quickLinks from './features/links'
-import linksImport from './features/linksImport'
 import hideElements from './features/hide'
 import moveElements from './features/move'
-import localBackgrounds from './features/localbackgrounds'
-import unsplashBackgrounds from './features/unsplash'
+import interfacePopup from './features/popup'
+import localBackgrounds from './features/backgrounds/local'
+import unsplashBackgrounds from './features/backgrounds/unsplash'
+import storage, { getSyncDefaults } from './storage'
+import linksImport, { syncNewBookmarks } from './features/links/bookmarks'
+import customFont, { fontIsAvailableInSubset } from './features/fonts'
+import { backgroundFilter, updateBackgroundOption } from './features/backgrounds'
+import { darkmode, favicon, tabTitle, textShadow, pageControl } from './features/others'
 
 import langList from './langs'
 import parse from './utils/parse'
-import throttle from './utils/throttle'
 import debounce from './utils/debounce'
 import filterImports from './utils/filterimports'
 import orderedStringify from './utils/orderedstringify'
+import { loadCallbacks } from './utils/onsettingsload'
 import { traduction, tradThis, toggleTraduction } from './utils/translations'
-import { inputThrottle, closeEditLink, stringMaxSize, turnRefreshButton } from './utils'
+import { getHTMLTemplate, inputThrottle, stringMaxSize, turnRefreshButton } from './utils'
 import { SYSTEM_OS, IS_MOBILE, PLATFORM, BROWSER, SYNC_DEFAULT, LOCAL_DEFAULT } from './defaults'
 
-import {
-	toggleWidgetsDisplay,
-	backgroundFilter,
-	customCss,
-	darkmode,
-	favicon,
-	tabTitle,
-	textShadow,
-	pageControl,
-} from './index'
+// import { highlightText } from 'prism-code-editor/prism'
+// import 'prism-code-editor/prism/languages/json'
 
-import type { Sync, Weather } from './types/sync'
+import type { Langs } from '../types/langs'
 
-type Langs = keyof typeof langList
+export async function settingsPreload() {
+	const innerHtml = await (await fetch('settings.html')).text()
+	const outerHtml = `<aside id="settings" class="init">${innerHtml}</aside>`
+	const template = document.querySelector<HTMLTemplateElement>('#settings-template')
+
+	if (template) {
+		template.innerHTML = outerHtml
+	}
+}
 
 export async function settingsInit() {
-	const data = await storage.sync.get()
-	const html = await (await fetch('settings.html')).text()
-
-	const parser = new DOMParser()
-	const settingsDom = document.createElement('aside')
-	const contentList = parser.parseFromString(html, 'text/html').body.childNodes
-
-	settingsDom.id = 'settings'
-	settingsDom.setAttribute('class', 'init')
-
-	for (const elem of Object.values(contentList)) {
-		settingsDom.appendChild(elem)
+	if (!!document.getElementById('settings')) {
+		return
 	}
+
+	const data = await storage.sync.get()
+	const settingsDom = getHTMLTemplate<HTMLElement>('settings-template', '#settings')
+
+	document.body.appendChild(settingsDom)
 
 	traduction(settingsDom, data.lang)
-	signature(settingsDom)
-	showall(data.showall, false, settingsDom)
+	showall(data.showall, false)
+	updateExportJSON(data)
+	initOptionsValues(data)
+	controlOptionsTabFocus()
+	initOptionsEvents()
+	settingsDrawerBar()
+	settingsFooter()
+	loadCallbacks()
 
-	setTimeout(() => document.body.appendChild(settingsDom))
+	queueMicrotask(() => document.dispatchEvent(new Event('settings')))
 
-	const paramId = (str: string) => settingsDom.querySelector('#' + str) as HTMLInputElement
-	const paramClasses = (str: string) => settingsDom.querySelectorAll('.' + str)!
+	// On settings changes, update export code
+	// beforeunload stuff because of this issue: https://github.com/victrme/Bonjourr/issues/194
+	const storageUpdate = () => updateExportJSON()
+	const removeListener = () => chrome.storage.onChanged.removeListener(storageUpdate)
 
-	const initCheckbox = (id: string, cat: boolean) => {
-		const checkbox = paramId(id) as HTMLInputElement
-		checkbox.checked = cat
+	if (PLATFORM === 'online') {
+		window.addEventListener('storage', storageUpdate)
+	} else {
+		chrome.storage.onChanged.addListener(storageUpdate)
+		window.addEventListener('beforeunload', removeListener, { once: true })
 	}
 
-	const initInput = (id: string, val: string | number) => {
-		const input = paramId(id) as HTMLInputElement
-		input.value = typeof val === 'string' ? val : val?.toString()
-	}
+	document.addEventListener('toggle-settings', toggleSettingsMenu)
+	// document.getElementById('showSettings')?.addEventListener('click', console.log)
 
+	console.log('load')
+}
+
+function initOptionsValues(data: Sync.Storage) {
+	const domsettings = document.getElementById('settings') as HTMLElement
 	const userQuotes = !data.quotes?.userlist?.[0] ? undefined : data.quotes?.userlist
 
-	initInput('i_blur', data.background_blur ?? 15)
-	initInput('i_bright', data.background_bright ?? 0.8)
-	initInput('cssEditor', data.css || '')
-	initInput('i_row', data.linksrow || 8)
-	initInput('i_linkstyle', data.linkstyle || 'default')
-	initInput('i_type', data.background_type || 'unsplash')
-	initInput('i_freq', data.unsplash?.every)
-	initInput('i_dark', data.dark || 'system')
-	initInput('i_favicon', data.favicon ?? '')
-	initInput('i_tabtitle', data.tabtitle ?? '')
-	initInput('i_pagewidth', data.pagewidth || 1600)
-	initInput('i_pagegap', data.pagegap ?? 1)
-	initInput('i_greeting', data.greeting ?? '')
-	initInput('i_textshadow', data.textShadow ?? 0.2)
-	initInput('i_noteswidth', data.notes?.width || 50)
-	initInput('i_notesopacity', data.notes?.opacity.toString() || 0.1)
-	initInput('i_notesalign', data.notes?.align || 'left')
-	initInput('i_sbengine', data.searchbar?.engine || 'google')
-	initInput('i_sbplaceholder', data.searchbar?.placeholder || '')
-	initInput('i_sbopacity', data.searchbar?.opacity ?? 0.1)
-	initInput('i_sbrequest', data.searchbar?.request || '')
-	initInput('i_qtfreq', data.quotes?.frequency || 'day')
-	initInput('i_qttype', data.quotes?.type || 'classic')
-	initInput('i_qtlist', JSON.stringify(userQuotes) ?? '')
-	initInput('i_clockface', data.clock?.face || 'none')
-	initInput('i_clockstyle', data.clock?.style || 'round')
-	initInput('i_clocksize', data.clock?.size ?? 5)
-	initInput('i_timezone', data.clock?.timezone || 'auto')
-	initInput('i_collection', data.unsplash?.collection ?? '')
-	initInput('i_geol', data.weather?.geolocation || 'approximate')
-	initInput('i_ccode', data.weather?.ccode || 'US')
-	initInput('i_units', data.weather?.unit ?? 'metric')
-	initInput('i_forecast', data.weather?.forecast || 'auto')
-	initInput('i_temp', data.weather?.temperature || 'actual')
-	initInput('i_moreinfo', data.weather?.moreinfo || 'none')
-	initInput('i_provider', data.weather?.provider ?? '')
-	initInput('i_weight', data.font?.weight || '300')
-	initInput('i_size', data.font?.size || (IS_MOBILE ? 11 : 14))
+	setInput('i_blur', data.background_blur ?? 15)
+	setInput('i_bright', data.background_bright ?? 0.8)
+	setInput('i_row', data.linksrow || 8)
+	setInput('i_linkstyle', data.linkstyle || 'default')
+	setInput('i_type', data.background_type || 'unsplash')
+	setInput('i_freq', data.unsplash?.every)
+	setInput('i_dark', data.dark || 'system')
+	setInput('i_favicon', data.favicon ?? '')
+	setInput('i_tabtitle', data.tabtitle ?? '')
+	setInput('i_pagewidth', data.pagewidth || 1600)
+	setInput('i_pagegap', data.pagegap ?? 1)
+	setInput('i_dateformat', data.dateformat || 'eu')
+	setInput('i_greeting', data.greeting ?? '')
+	setInput('i_textshadow', data.textShadow ?? 0.2)
+	setInput('i_noteswidth', data.notes?.width || 50)
+	setInput('i_notesopacity', data.notes?.opacity.toString() || 0.1)
+	setInput('i_notesalign', data.notes?.align || 'left')
+	setInput('i_sbengine', data.searchbar?.engine || 'google')
+	setInput('i_sbplaceholder', data.searchbar?.placeholder || '')
+	setInput('i_sbopacity', data.searchbar?.opacity ?? 0.1)
+	setInput('i_sbwidth', data.searchbar?.width ?? 30)
+	setInput('i_sbrequest', data.searchbar?.request || '')
+	setInput('i_qtfreq', data.quotes?.frequency || 'day')
+	setInput('i_qttype', data.quotes?.type || 'classic')
+	setInput('i_qtlist', userQuotes ?? '')
+	setInput('i_clockface', data.clock?.face || 'none')
+	setInput('i_clockstyle', data.clock?.style || 'round')
+	setInput('i_clocksize', data.clock?.size ?? 5)
+	setInput('i_timezone', data.clock?.timezone || 'auto')
+	setInput('i_collection', data.unsplash?.collection ?? '')
+	setInput('i_geol', data.weather?.geolocation || 'approximate')
+	setInput('i_ccode', data.weather?.ccode || 'US')
+	setInput('i_units', data.weather?.unit ?? 'metric')
+	setInput('i_forecast', data.weather?.forecast || 'auto')
+	setInput('i_temp', data.weather?.temperature || 'actual')
+	setInput('i_moreinfo', data.weather?.moreinfo || 'none')
+	setInput('i_provider', data.weather?.provider ?? '')
+	setInput('i_weight', data.font?.weight || '300')
+	setInput('i_size', data.font?.size || (IS_MOBILE ? 11 : 14))
+	setInput('i_announce', data.announcements ?? 'major')
 
-	initCheckbox('i_showall', data.showall)
-	initCheckbox('i_settingshide', data.hide?.settingsicon ?? false)
-	initCheckbox('i_quicklinks', data.quicklinks)
-	initCheckbox('i_linknewtab', data.linknewtab)
-	initCheckbox('i_time', data.time)
-	initCheckbox('i_usdate', data.usdate)
-	initCheckbox('i_main', data.main)
-	initCheckbox('i_greethide', !data.hide?.greetings ?? true)
-	initCheckbox('i_notes', data.notes?.on ?? false)
-	initCheckbox('i_sb', data.searchbar?.on ?? false)
-	initCheckbox('i_quotes', data.quotes?.on ?? false)
-	initCheckbox('i_ampm', data.clock?.ampm ?? false)
-	initCheckbox('i_sbsuggestions', data.searchbar?.suggestions ?? true)
-	initCheckbox('i_sbnewtab', data.searchbar?.newtab ?? false)
-	initCheckbox('i_qtauthor', data.quotes?.author ?? false)
-	initCheckbox('i_seconds', data.clock?.seconds ?? false)
-	initCheckbox('i_analog', data.clock?.analog ?? false)
+	setCheckbox('i_showall', data.showall)
+	setCheckbox('i_settingshide', data.hide?.settingsicon ?? false)
+	setCheckbox('i_quicklinks', data.quicklinks)
+	setCheckbox('i_syncbookmarks', !!data.syncbookmarks)
+	setCheckbox('i_linktabs', data.linktabs.active)
+	setCheckbox('i_linknewtab', data.linknewtab)
+	setCheckbox('i_time', data.time)
+	setCheckbox('i_main', data.main)
+	setCheckbox('i_greethide', !data.hide?.greetings)
+	setCheckbox('i_notes', data.notes?.on ?? false)
+	setCheckbox('i_sb', data.searchbar?.on ?? false)
+	setCheckbox('i_quotes', data.quotes?.on ?? false)
+	setCheckbox('i_ampm', data.clock?.ampm ?? false)
+	setCheckbox('i_sbsuggestions', data.searchbar?.suggestions ?? true)
+	setCheckbox('i_sbnewtab', data.searchbar?.newtab ?? false)
+	setCheckbox('i_qtauthor', data.quotes?.author ?? false)
+	setCheckbox('i_seconds', data.clock?.seconds ?? false)
+	setCheckbox('i_analog', data.clock?.analog ?? false)
 
 	// Input translation
-	translatePlaceholders(settingsDom)
+	translatePlaceholders()
 
 	// Change edit tips on mobile
 	if (IS_MOBILE) {
-		settingsDom.querySelector('.tooltiptext .instructions')!.textContent = tradThis(
+		domsettings.querySelector('.tooltiptext .instructions')!.textContent = tradThis(
 			`Edit your Quick Links by long-pressing the icon.`
 		)
 	}
@@ -149,16 +163,13 @@ export async function settingsInit() {
 		i_lang.appendChild(option)
 	})
 
-	initInput('i_lang', data.lang || 'en') // must be init after children appening
-
-	// Activate changelog
-	if (localStorage.hasUpdated === 'true') {
-		changelogControl(settingsDom)
-	}
+	// must be init after children appening
+	setInput('i_lang', data.lang || 'en')
 
 	// No bookmarks import on safari || online
 	if (BROWSER === 'safari' || PLATFORM === 'online') {
-		paramId('b_importbookmarks').setAttribute('style', 'display: none')
+		paramId('importbookmarks')?.setAttribute('style', 'display: none')
+		paramId('syncbookmarks')?.setAttribute('style', 'display: none')
 	}
 
 	// Favicon doesn't work on Safari
@@ -184,25 +195,18 @@ export async function settingsInit() {
 	paramId('quotes_options')?.classList.toggle('shown', data.quotes?.on)
 
 	// Page layout
-	settingsDom.querySelectorAll<HTMLButtonElement>('#grid-layout button').forEach((b) => {
+	domsettings.querySelectorAll<HTMLButtonElement>('#grid-layout button').forEach((b) => {
 		const selectedLayout = b.dataset.layout === (data.move?.selection || 'single')
 		b?.classList.toggle('selected', selectedLayout)
 	})
-
-	// Disables layout change on mobile
-	if (window.innerWidth < 600 && 'ontouchstart' in window) {
-		for (const button of settingsDom.querySelectorAll('#grid-layout button')) {
-			button?.setAttribute('disabled', '')
-		}
-	}
 
 	// Time & main hide elems
 	;(function initHideInputs() {
 		const { clock, date, weatherdesc, weathericon } = data.hide || {}
 		let time = !clock && !date ? 'all' : clock ? 'clock' : 'date'
 		let weather = weatherdesc && weathericon ? 'disabled' : weatherdesc ? 'desc' : weathericon ? 'icon' : 'all'
-		initInput('i_timehide', time)
-		initInput('i_weatherhide', weather)
+		setInput('i_timehide', time)
+		setInput('i_weatherhide', weather)
 	})()
 
 	// Backgrounds options init
@@ -215,61 +219,18 @@ export async function settingsInit() {
 		paramId('i_collection')?.setAttribute('placeholder', coll ? coll : '2nVzlQADDIE')
 	}
 
-	// Update thumbnails grid max-height by watching changes
-	const fileContainer = settingsDom.querySelector<HTMLElement>('#fileContainer')
-	const optionsDom = settingsDom.querySelector<HTMLElement>('#local_options')
-
-	if (fileContainer) {
-		new MutationObserver(() => {
-			const thumbsHeight = fileContainer?.offsetHeight ?? 0
-			optionsDom?.style.setProperty('--thumbnails-grid-height', thumbsHeight + 'px')
-		}).observe(fileContainer, { childList: true })
-	}
-
-	// CSS height control
-	if (data.cssHeight) {
-		paramId('cssEditor').setAttribute('style', 'height: ' + data.cssHeight + 'px')
-	}
-
 	// Quotes option display
 	paramId('quotes_options')?.classList.toggle('shown', data.quotes?.on)
 	paramId('quotes_userlist')?.classList.toggle('shown', data.quotes?.type === 'user')
 
-	updateExportJSON(settingsDom)
-
-	paramClasses('uploadContainer').forEach(function (uploadContainer: Element) {
-		const toggleDrag = () => uploadContainer.classList.toggle('dragover')
-		const input = uploadContainer.querySelector('input[type="file"')
-
-		input?.addEventListener('dragenter', toggleDrag)
-		input?.addEventListener('dragleave', toggleDrag)
-		input?.addEventListener('drop', toggleDrag)
-	})
-
-	settingsDom.querySelectorAll('.tooltip').forEach((elem: Element) => {
-		elem.addEventListener('click', function () {
-			const cl = [...elem.classList].filter((c) => c.startsWith('tt'))[0] // get tt class
-			settingsDom.querySelector('.tooltiptext.' + cl)?.classList.toggle('shown') // toggle tt text
+	document.querySelectorAll<HTMLFormElement>('#settings form').forEach((form) => {
+		form.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+			input.addEventListener('input', () => form.classList.toggle('valid', form.checkValidity()))
 		})
 	})
+}
 
-	// Reduces opacity to better see interface appearance changes
-	if (IS_MOBILE) {
-		const touchHandler = (start: boolean) => (settingsDom.style.opacity = start ? '0.2' : '1')
-		const rangeInputs = settingsDom.querySelectorAll("input[type='range'")
-
-		rangeInputs.forEach((input: Element) => {
-			input.addEventListener('touchstart', () => touchHandler(true), { passive: true })
-			input.addEventListener('touchend', () => touchHandler(false), { passive: true })
-		})
-	}
-
-	//
-	//
-	// Input Events
-	//
-	//
-
+function initOptionsEvents() {
 	//
 	// General
 
@@ -309,34 +270,41 @@ export async function settingsInit() {
 	// Quick links
 
 	paramId('i_quicklinks').addEventListener('click', function (this: HTMLInputElement) {
-		toggleWidgetsDisplay({ quicklinks: this.checked }, true)
+		moveElements(undefined, { widget: ['quicklinks', this.checked] })
 	})
 
-	const submitLinkFunc = throttle(() => quickLinks(null, { add: true }), 1200)
+	paramId('f_addlink').addEventListener('submit', function (this, event: SubmitEvent) {
+		event.preventDefault()
 
-	paramId('i_title').addEventListener('keyup', function (this: KeyboardEvent) {
-		if (this.code === 'Enter') paramId('i_url')?.focus()
+		quickLinks(undefined, {
+			addLink: {
+				title: paramId('i_addlink-title').value,
+				url: paramId('i_addlink-url').value,
+			},
+		})
+
+		paramId('i_addlink-url').value = ''
+		paramId('i_addlink-title').value = ''
 	})
 
-	paramId('i_url').addEventListener('change', function (this: KeyboardEvent) {
-		submitLinkFunc()
+	paramId('i_syncbookmarks').addEventListener('change', function (this) {
+		syncNewBookmarks(undefined, this.checked)
 	})
 
-	paramId('submitlink').addEventListener('click', (e) => {
-		submitLinkFunc()
-		inputThrottle(e.target as HTMLInputElement, 1200)
+	paramId('i_linktabs').addEventListener('change', function (this) {
+		quickLinks(undefined, { tab: this.checked })
 	})
 
 	paramId('i_linknewtab').addEventListener('change', function (this) {
-		quickLinks(null, { newtab: this.checked })
+		quickLinks(undefined, { newtab: this.checked })
 	})
 
 	paramId('i_linkstyle').addEventListener('change', function (this) {
-		quickLinks(null, { style: this.value })
+		quickLinks(undefined, { style: this.value })
 	})
 
 	paramId('i_row').addEventListener('input', function (this) {
-		quickLinks(null, { row: this.value })
+		quickLinks(undefined, { row: this.value })
 	})
 
 	paramId('b_importbookmarks').addEventListener('click', linksImport)
@@ -349,35 +317,18 @@ export async function settingsInit() {
 	})
 
 	paramId('i_freq').addEventListener('change', function (this: HTMLInputElement) {
-		const i_type = paramId('i_type') as HTMLInputElement
-		const isLocalBg = i_type.value === 'local'
-
-		if (isLocalBg) {
-			localBackgrounds({ freq: this.value })
-		} else {
-			unsplashBackgrounds(null, { every: this.value })
-		}
+		updateBackgroundOption({ freq: this.value })
 	})
 
 	paramId('i_refresh').addEventListener('click', function (this: HTMLInputElement) {
-		const i_type = paramId('i_type') as HTMLInputElement
-
-		if (this.children[0]) {
-			const arrow = this.children[0] as HTMLSpanElement
-			const isLocalBg = i_type.value === 'local'
-
-			if (isLocalBg) {
-				localBackgrounds({ refresh: arrow })
-			} else {
-				unsplashBackgrounds(null, { refresh: arrow })
-			}
-		}
-
-		inputThrottle(this)
+		updateBackgroundOption({ refresh: this.children[0] as HTMLSpanElement })
 	})
 
-	paramId('i_collection').addEventListener('change', function (this: HTMLInputElement) {
-		unsplashBackgrounds(null, { collection: stringMaxSize(this.value, 256) })
+	paramId('f_collection').addEventListener('submit', function (this, event) {
+		event.preventDefault()
+		unsplashBackgrounds(undefined, {
+			collection: stringMaxSize(paramId('i_collection').value, 256),
+		})
 	})
 
 	//
@@ -385,6 +336,14 @@ export async function settingsInit() {
 
 	paramId('i_bgfile').addEventListener('change', function (this: HTMLInputElement) {
 		localBackgrounds({ newfile: this.files })
+	})
+
+	paramId('b_thumbnail-more').addEventListener('click', function (this: HTMLInputElement) {
+		localBackgrounds({ showing: 'more' })
+	})
+
+	paramId('b_thumbnail-all').addEventListener('click', function (this: HTMLInputElement) {
+		localBackgrounds({ showing: 'all' })
 	})
 
 	paramId('i_blur').addEventListener('input', function (this: HTMLInputElement) {
@@ -399,39 +358,39 @@ export async function settingsInit() {
 	// Time and date
 
 	paramId('i_time').addEventListener('change', function (this: HTMLInputElement) {
-		toggleWidgetsDisplay({ time: this.checked }, true)
+		moveElements(undefined, { widget: ['time', this.checked] })
 	})
 
 	paramId('i_analog').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { analog: this.checked })
+		clock(undefined, { analog: this.checked })
 	})
 
 	paramId('i_seconds').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { seconds: this.checked })
+		clock(undefined, { seconds: this.checked })
 	})
 
 	paramId('i_clockface').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { face: this.value })
+		clock(undefined, { face: this.value })
 	})
 
 	paramId('i_clockstyle').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { style: this.value })
+		clock(undefined, { style: this.value })
 	})
 
 	paramId('i_clocksize').addEventListener('input', function (this: HTMLInputElement) {
-		clock(null, { size: parseFloat(this.value) })
+		clock(undefined, { size: parseFloat(this.value) })
 	})
 
 	paramId('i_ampm').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { ampm: this.checked })
+		clock(undefined, { ampm: this.checked })
 	})
 
 	paramId('i_timezone').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { timezone: this.value })
+		clock(undefined, { timezone: this.value })
 	})
 
-	paramId('i_usdate').addEventListener('change', function (this: HTMLInputElement) {
-		clock(null, { usdate: this.checked })
+	paramId('i_dateformat').addEventListener('change', function (this) {
+		clock(undefined, { dateformat: this.value })
 	})
 
 	paramId('i_timehide').addEventListener('change', function (this: HTMLInputElement) {
@@ -442,37 +401,40 @@ export async function settingsInit() {
 	// Weather
 
 	paramId('i_main').addEventListener('change', function (this: HTMLInputElement) {
-		toggleWidgetsDisplay({ main: this.checked }, true)
+		moveElements(undefined, { widget: ['main', this.checked] })
 	})
 
-	paramId('i_city').addEventListener('change', function (this: HTMLInputElement) {
-		weather(null, { city: this.value })
+	paramId('i_geol').addEventListener('change', function (this: HTMLInputElement, event) {
+		weather(undefined, { geol: this?.value })
 	})
 
-	paramId('i_geol').addEventListener('change', function (this: HTMLInputElement) {
-		inputThrottle(this, 1200)
-		weather(null, { geol: this.value })
+	paramId('i_city').addEventListener('input', function (this: HTMLInputElement) {
+		document.getElementById('f_location')?.classList.toggle('valid', this.value.length > 2)
+	})
+
+	paramId('f_location').addEventListener('submit', function (this, event: SubmitEvent) {
+		weather(undefined, { city: true })
+		event.preventDefault()
 	})
 
 	paramId('i_units').addEventListener('change', function (this: HTMLInputElement) {
-		inputThrottle(this, 1200)
-		weather(null, { units: this.value as Weather['unit'] })
+		weather(undefined, { units: this.value })
 	})
 
 	paramId('i_forecast').addEventListener('change', function (this: HTMLInputElement) {
-		weather(null, { forecast: this.value })
+		weather(undefined, { forecast: this.value })
 	})
 
 	paramId('i_temp').addEventListener('change', function (this: HTMLInputElement) {
-		weather(null, { temp: this.value })
+		weather(undefined, { temp: this.value })
 	})
 
 	paramId('i_moreinfo').addEventListener('change', function (this: HTMLInputElement) {
-		weather(null, { moreinfo: this.value })
+		weather(undefined, { moreinfo: this.value })
 	})
 
 	paramId('i_provider').addEventListener('change', function (this: HTMLInputElement) {
-		weather(null, { provider: this.value })
+		weather(undefined, { provider: this.value })
 		this.blur()
 	})
 
@@ -480,15 +442,15 @@ export async function settingsInit() {
 		let weatherdesc = this.value === 'disabled' || this.value === 'desc'
 		let weathericon = this.value === 'disabled' || this.value === 'icon'
 		hideElements({ weatherdesc, weathericon }, { isEvent: true })
-		weather(null, { unhide: true })
+		weather(undefined, { unhide: true })
 	})
 
 	paramId('i_greethide').addEventListener('change', function () {
 		hideElements({ greetings: !this.checked }, { isEvent: true })
 	})
 
-	paramId('i_greeting').addEventListener('keyup', function () {
-		clock(null, { greeting: stringMaxSize(this.value, 32) })
+	paramId('i_greeting').addEventListener('input', function () {
+		clock(undefined, { greeting: stringMaxSize(this.value, 32) })
 	})
 
 	paramId('i_greeting').addEventListener('change', function () {
@@ -499,50 +461,54 @@ export async function settingsInit() {
 	// Notes
 
 	paramId('i_notes').addEventListener('click', function (this: HTMLInputElement) {
-		toggleWidgetsDisplay({ notes: this.checked }, true)
+		moveElements(undefined, { widget: ['notes', this.checked] })
 	})
 
 	paramId('i_notesalign').addEventListener('change', function (this: HTMLInputElement) {
-		notes(null, { is: 'align', value: this.value })
+		notes(undefined, { align: this.value })
 	})
 
 	paramId('i_noteswidth').addEventListener('input', function (this: HTMLInputElement) {
-		notes(null, { is: 'width', value: this.value })
+		notes(undefined, { width: this.value })
 	})
 
 	paramId('i_notesopacity').addEventListener('input', function (this: HTMLInputElement) {
-		notes(null, { is: 'opacity', value: this.value })
+		notes(undefined, { opacity: this.value })
 	})
 
 	//
 	// Searchbar
 
 	paramId('i_sb').addEventListener('click', function (this: HTMLInputElement) {
-		toggleWidgetsDisplay({ searchbar: this.checked }, true)
+		moveElements(undefined, { widget: ['searchbar', this.checked] })
 	})
 
 	paramId('i_sbengine').addEventListener('change', function (this: HTMLInputElement) {
-		searchbar(null, { engine: this.value })
+		searchbar(undefined, { engine: this.value })
 	})
 
 	paramId('i_sbopacity').addEventListener('input', function (this: HTMLInputElement) {
-		searchbar(null, { opacity: this.value })
+		searchbar(undefined, { opacity: this.value })
+	})
+
+	paramId('i_sbwidth').addEventListener('input', function (this: HTMLInputElement) {
+		searchbar(undefined, { width: this.value })
 	})
 
 	paramId('i_sbrequest').addEventListener('change', function (this: HTMLInputElement) {
-		searchbar(null, { request: this })
+		searchbar(undefined, { request: this })
 	})
 
 	paramId('i_sbnewtab').addEventListener('change', function (this: HTMLInputElement) {
-		searchbar(null, { newtab: this.checked })
+		searchbar(undefined, { newtab: this.checked })
 	})
 
 	paramId('i_sbsuggestions').addEventListener('change', function (this: HTMLInputElement) {
-		searchbar(null, { suggestions: this.checked })
+		searchbar(undefined, { suggestions: this.checked })
 	})
 
 	paramId('i_sbplaceholder').addEventListener('keyup', function () {
-		searchbar(null, { placeholder: this.value })
+		searchbar(undefined, { placeholder: this.value })
 	})
 
 	paramId('i_sbplaceholder').addEventListener('change', function () {
@@ -553,74 +519,69 @@ export async function settingsInit() {
 	// Quotes
 
 	paramId('i_quotes').addEventListener('click', function (this: HTMLInputElement) {
-		toggleWidgetsDisplay({ quotes: this.checked }, true)
+		moveElements(undefined, { widget: ['quotes', this.checked] })
 	})
 
 	paramId('i_qtfreq').addEventListener('change', function () {
-		quotes(null, { frequency: this.value })
+		quotes(undefined, { frequency: this.value })
 	})
 
 	paramId('i_qttype').addEventListener('change', function () {
-		quotes(null, { type: this.value })
+		quotes(undefined, { type: this.value })
 	})
 
 	paramId('i_qtrefresh').addEventListener('click', function () {
 		inputThrottle(this)
 		turnRefreshButton(this.children[0] as HTMLSpanElement, true)
-		quotes(null, { refresh: true })
+		quotes(undefined, { refresh: true })
 	})
 
 	paramId('i_qtauthor').addEventListener('change', function () {
-		quotes(null, { author: this.checked })
+		quotes(undefined, { author: this.checked })
 	})
 
 	paramId('i_qtlist').addEventListener('change', function () {
-		quotes(null, { userlist: this.value })
+		quotes(undefined, { userlist: this.value })
 	})
 
 	//
 	// Custom fonts
 
-	paramId('i_customfont').addEventListener('focus', function () {
-		customFont(null, { autocomplete: settingsDom })
+	paramId('i_customfont').addEventListener('pointerenter', function () {
+		customFont(undefined, { autocomplete: true })
 	})
 
-	paramId('i_customfont').addEventListener('change', function () {
-		customFont(null, { family: this.value })
-	})
-
-	paramId('i_customfont').addEventListener('beforeinput', function (this, e) {
-		if (this.value === '' && e.inputType === 'deleteContentBackward') {
-			customFont(null, { family: '' })
-		}
+	paramId('f_customfont').addEventListener('submit', function (event) {
+		customFont(undefined, { family: paramId('i_customfont').value })
+		event.preventDefault()
 	})
 
 	paramId('i_weight').addEventListener('input', function () {
-		customFont(null, { weight: this.value })
+		customFont(undefined, { weight: this.value })
 	})
 
 	paramId('i_size').addEventListener('input', function () {
-		customFont(null, { size: this.value })
+		customFont(undefined, { size: this.value })
 	})
 
 	paramId('i_textshadow').addEventListener('input', function () {
-		textShadow(null, parseFloat(this.value))
+		textShadow(undefined, parseFloat(this.value))
 	})
 
 	//
 	// Page layout
 
 	paramId('b_editmove').addEventListener('click', function () {
-		moveElements(null, { toggle: true })
+		moveElements(undefined, { toggle: true })
 	})
 
 	paramId('b_resetlayout').addEventListener('click', function () {
-		moveElements(null, { reset: true })
+		moveElements(undefined, { reset: true })
 	})
 
 	for (const button of paramId('grid-layout').querySelectorAll<HTMLButtonElement>('button')) {
 		button.addEventListener('click', () => {
-			moveElements(null, { layout: button.dataset.layout || '' })
+			moveElements(undefined, { layout: button.dataset.layout || '' })
 		})
 	}
 
@@ -632,442 +593,131 @@ export async function settingsInit() {
 		pageControl({ gap: parseFloat(this.value) }, true)
 	})
 
-	paramId('i_pagewidth').addEventListener('touchstart', () => moveElements(null, { overlay: true }), { passive: true })
-	paramId('i_pagewidth').addEventListener('mousedown', () => moveElements(null, { overlay: true }))
-	paramId('i_pagewidth').addEventListener('touchend', () => moveElements(null, { overlay: false }))
-	paramId('i_pagewidth').addEventListener('mouseup', () => moveElements(null, { overlay: false }))
+	paramId('i_pagewidth').addEventListener('touchstart', () => moveElements(undefined, { overlay: true }), { passive: true })
+	paramId('i_pagewidth').addEventListener('mousedown', () => moveElements(undefined, { overlay: true }))
+	paramId('i_pagewidth').addEventListener('touchend', () => moveElements(undefined, { overlay: false }))
+	paramId('i_pagewidth').addEventListener('mouseup', () => moveElements(undefined, { overlay: false }))
 
 	//
-	// Custom Style
+	// Updates
 
-	paramId('cssEditor').addEventListener('keyup', function (this: Element, ev: Event) {
-		customCss(null, { is: 'styling', val: (ev.target as HTMLInputElement).value })
+	paramId('i_announce').addEventListener('change', function (this) {
+		interfacePopup(undefined, { announcements: this.value })
 	})
-
-	setTimeout(() => {
-		let skipFirstResize = true
-
-		const cssResize = new ResizeObserver((e) => {
-			if (skipFirstResize) return (skipFirstResize = false)
-
-			const rect = e[0].contentRect
-			customCss(null, { is: 'resize', val: rect.height + rect.top * 2 })
-		})
-		cssResize.observe(paramId('cssEditor'))
-	}, 400)
 
 	//
 	// Settings managment
 
-	const { exportAsFile, copyImportText, importAsText, importAsFile } = settingsMgmt()
+	paramId('s_export').addEventListener('click', function () {
+		toggleSettingsManagement(false)
+	})
 
-	const toggleSettingsMgmt = (toggled: boolean) => {
-		paramId('export')?.classList.toggle('shown', !toggled)
-		paramId('import')?.classList.toggle('shown', toggled)
-		paramClasses('importexport-tabs')[0]?.classList.toggle('toggled', toggled)
-	}
+	paramId('s_import').addEventListener('click', function () {
+		toggleSettingsManagement(true)
+	})
 
-	paramId('s_export').addEventListener('click', () => toggleSettingsMgmt(false))
-	paramId('s_import').addEventListener('click', () => toggleSettingsMgmt(true))
-	paramId('b_exportfile').addEventListener('click', () => exportAsFile())
-	paramId('b_exportcopy').addEventListener('click', (e) => copyImportText(e.target as HTMLButtonElement))
-	paramId('i_importfile').addEventListener('change', (e) => importAsFile(e.target as HTMLInputElement))
-	paramId('i_importtext').addEventListener('keyup', (e) => importAsText((e.target as HTMLInputElement).value))
-	paramId('b_resetconf').addEventListener('click', () => paramsReset('conf'))
-	paramId('b_resetyes').addEventListener('click', () => paramsReset('yes'))
-	paramId('b_resetno').addEventListener('click', () => paramsReset('no'))
+	paramId('b_exportfile').addEventListener('click', function () {
+		exportAsFile()
+	})
+
+	paramId('b_exportcopy').addEventListener('click', function (this) {
+		copyImportText(this)
+	})
+
+	paramId('i_importfile').addEventListener('change', function (this) {
+		importAsFile(this)
+	})
+
+	paramId('i_importtext').addEventListener('keyup', function (this) {
+		importAsText(this.value)
+	})
+
+	paramId('b_resetconf').addEventListener('click', function () {
+		paramsReset('conf')
+	})
+
+	paramId('b_resetyes').addEventListener('click', function () {
+		paramsReset('yes')
+	})
+
+	paramId('b_resetno').addEventListener('click', function () {
+		paramsReset('no')
+	})
+
 	paramId('b_importtext').addEventListener('click', function () {
 		const val = (document.getElementById('i_importtext') as HTMLInputElement).value
-		paramsImport(parse<Partial<Sync>>(val) ?? {})
+		paramsImport(parse<Partial<Sync.Storage>>(val) ?? {})
 	})
 
 	//
-	// A11y tabbing inputs control
-	// Expensive way to toggle all inputs tabindex on "params hiding actions" in settings
-	function optionsTabIndex() {
-		const isAllSettings = paramId('i_showall').checked
+	// Other
 
-		const toggleTabindex = (parent: string, on: boolean) => {
-			settingsDom?.querySelectorAll(`${parent} :is(input,  select,  button,  a, textarea)`).forEach((dom) => {
-				on ? dom.removeAttribute('tabindex') : dom.setAttribute('tabindex', '-1')
-			})
-		}
-
-		// If showall, start by enabling .as fields
-		if (isAllSettings) {
-			toggleTabindex('.as', true)
-		}
-
-		// Then control if widgets are on or off
-		settingsDom.querySelectorAll('.dropdown').forEach((dom) => {
-			toggleTabindex('#' + dom.id, dom?.classList.contains('shown'))
+	// Reduces opacity to better see interface appearance changes
+	if (IS_MOBILE) {
+		const touchHandler = (touch: boolean) => document.getElementById('settings')?.classList.toggle('see-through', touch)
+		document.querySelectorAll("input[type='range'").forEach((input: Element) => {
+			input.addEventListener('touchstart', () => touchHandler(true), { passive: true })
+			input.addEventListener('touchend', () => touchHandler(false), { passive: true })
 		})
-
-		// Disable all "all" settings if off
-		if (isAllSettings === false) {
-			toggleTabindex('.as', false)
-		}
-
-		// Toggle tooltips
-		settingsDom.querySelectorAll('.tooltiptext').forEach((dom) => {
-			toggleTabindex('.' + dom.classList[1], dom?.classList.contains('shown'))
-		})
-
-		// Toggle in-widgets hidden options
-		toggleTabindex('#analog_options', paramId('analog_options').classList.contains('shown'))
-		toggleTabindex('#digital_options', paramId('digital_options').classList.contains('shown'))
-		toggleTabindex('#searchbar_request', paramId('searchbar_request').classList.contains('shown'))
-		toggleTabindex('#weather_provider', paramId('weather_provider').classList.contains('shown'))
-		toggleTabindex('#quotes_userlist', paramId('quotes_userlist').classList.contains('shown'))
-		toggleTabindex('#import', paramId('import').classList.contains('shown'))
-		toggleTabindex('#export', paramId('export').classList.contains('shown'))
-		toggleTabindex('#sett_city', paramId('i_geol').checked === false)
-
-		// File export downloader is never tabbable
-		paramId('downloadfile').setAttribute('tabindex', '-1')
 	}
 
-	// On startup
-	optionsTabIndex()
+	// TODO: drag event not working ?
+	document.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input) => {
+		const toggleDrag = (_: DragEvent) => {
+			input.classList.toggle('dragover')
+		}
 
-	// Add event to specified inputs
-	settingsDom.querySelectorAll('.opt-hider').forEach((dom) => {
-		dom.addEventListener('input', () => setTimeout(() => optionsTabIndex(), 10))
+		input?.addEventListener('dragenter', toggleDrag)
+		input?.addEventListener('dragleave', toggleDrag)
+		input?.addEventListener('drop', toggleDrag)
 	})
 
-	//
-	// Global Events
-	//
+	document.querySelectorAll<HTMLElement>('.tooltip').forEach((elem) => {
+		elem.addEventListener('click', function () {
+			const cl = [...elem.classList].filter((c) => c.startsWith('tt'))[0] // get tt class
+			document.querySelector('.tooltiptext.' + cl)?.classList.toggle('shown') // toggle tt text
+		})
+	})
+}
 
+//
+//
+//
+
+function toggleSettingsMenu() {
+	const domsettings = document.getElementById('settings')
 	const domshowsettings = document.getElementById('showSettings')
-	const domsuggestions = document.getElementById('sb-suggestions')
 	const dominterface = document.getElementById('interface')
 	const domedit = document.getElementById('editlink')
-	const isOnline = PLATFORM === 'online'
+	const isClosed = domsettings?.classList.contains('shown') === false
 
-	// On settings changes, update export code
-	const storageUpdate = () => updateExportJSON(settingsDom)
-	const unloadUpdate = () => chrome.storage.onChanged.removeListener(storageUpdate)
+	domsettings?.classList.toggle('init', false)
+	domsettings?.classList.toggle('shown', isClosed)
+	domedit?.classList.toggle('pushed', isClosed)
+	dominterface?.classList.toggle('pushed', isClosed)
+	domshowsettings?.classList.toggle('shown', isClosed)
 
-	if (isOnline) {
-		window.addEventListener('storage', storageUpdate)
-	} else {
-		chrome.storage.onChanged.addListener(storageUpdate)
-		window.addEventListener('beforeunload', unloadUpdate, { once: true })
-	}
-
-	function toggleDisplay(dom: HTMLElement) {
-		const isClosed = !dom?.classList.contains('shown')
-
-		dom?.classList.toggle('init', false)
-		dom?.classList.toggle('shown', isClosed)
-		domedit?.classList.toggle('pushed', isClosed)
-		dominterface?.classList.toggle('pushed', isClosed)
-		domshowsettings?.classList.toggle('shown', isClosed)
-
-		settingsDom.style.removeProperty('transform')
-		settingsDom.style.removeProperty('transition')
-	}
-
-	document.getElementById('skiptosettings')?.addEventListener('click', function () {
-		toggleDisplay(settingsDom)
-		settingsDom.scrollTo({ top: 0 })
-
-		setTimeout(() => {
-			const showall = settingsDom.querySelector('#i_showall') as HTMLButtonElement
-			showall.focus()
-		}, 10)
-	})
-
-	domshowsettings?.addEventListener('click', function () {
-		toggleDisplay(settingsDom)
-	})
-
-	window.addEventListener('keydown', async function (e) {
-		if (e.altKey && e.code === 'KeyS') {
-			console.clear()
-			console.log(localStorage)
-			console.log(await storage.sync.get())
-		}
-
-		if (e.code === 'Escape') {
-			if (domedit?.classList.contains('shown')) {
-				closeEditLink()
-				return
-			}
-
-			if (domsuggestions?.classList.contains('shown')) {
-				domsuggestions?.classList.remove('shown')
-				return
-			}
-
-			toggleDisplay(settingsDom)
-			return
-		}
-
-		if (e.code === 'Tab') {
-			document.body.classList.toggle('tabbing', true)
-			return
-		}
-	})
-
-	document.body.addEventListener('click', function (e) {
-		const path = e.composedPath() ?? [document.body]
-		const pathIds = e.composedPath().map((el) => (el as HTMLElement).id)
-
-		const areSettingsShown = settingsDom?.classList.contains('shown')
-		const isEditlinkOpen = document.getElementById('editlink')?.classList.contains('shown')
-
-		const onBody = (path[0] as HTMLElement).tagName === 'BODY'
-		const onInterface = pathIds.includes('interface')
-		const onEdit = pathIds.includes('editlink')
-
-		if (document.body.classList.contains('tabbing')) {
-			document.body?.classList.toggle('tabbing', false)
-		}
-
-		if (!onEdit && isEditlinkOpen) {
-			closeEditLink()
-		}
-
-		if ((onBody || onInterface) && areSettingsShown) {
-			toggleDisplay(settingsDom)
-		}
-	})
-
-	//
-	// Mobile settings height control
-
-	function responsiveSettingsHeightDrag() {
-		let firstPos = 0
-		let startTouchY = 0
-
-		function dragStart(e: Event) {
-			e.preventDefault()
-
-			// Get mouse / touch y position
-			if (e.type === 'mousedown') startTouchY = (e as MouseEvent).clientY
-			if (e.type === 'touchstart') startTouchY = (e as TouchEvent).touches[0].clientY
-
-			// First time dragging, sets maximum y pos at which to block
-			if (firstPos === 0) firstPos = startTouchY
-
-			// Scrollbar padding control on windows & android
-			if (SYSTEM_OS.match(/windows|android/)) {
-				settingsDom.style.width = `calc(100% - 10px)`
-				settingsDom.style.paddingRight = `10px`
-			}
-
-			// prevent scroll when dragging
-			settingsDom.style.overflow = `clip`
-
-			// Add mouse / touch moves events
-			window.addEventListener('touchmove', dragMove)
-			window.addEventListener('mousemove', dragMove)
-		}
-
-		function dragMove(e: Event) {
-			let clientY: number = 0
-
-			// Get mouse / touch y position
-			if (e.type === 'mousemove') clientY = (e as MouseEvent).clientY
-			if (e.type === 'touchmove') clientY = (e as TouchEvent).touches[0].clientY
-
-			// element is below max height: move
-			if (clientY > 60) {
-				settingsDom.style.transform = `translateY(-${window.innerHeight + 30 - clientY}px)`
-				settingsDom.style.transition = `transform .0s`
-			}
-		}
-
-		function dragEnd(e: Event) {
-			let clientY: number = 0
-
-			// Get mouse / touch y position
-			if (e.type === 'mouseup' || e.type === 'mouseleave') clientY = (e as MouseEvent).clientY
-			if (e.type === 'touchend') clientY = (e as TouchEvent).changedTouches[0].clientY
-
-			// Remove move events
-			window.removeEventListener('touchmove', dragMove)
-			window.removeEventListener('mousemove', dragMove)
-
-			// reset mouse / touch pos
-			startTouchY = 0
-
-			settingsDom.style.removeProperty('padding')
-			settingsDom.style.removeProperty('width')
-			settingsDom.style.removeProperty('overflow')
-
-			// Add bottom padding to see bottom of settings
-			const signaturedom = document.querySelector('.signature') as HTMLDivElement
-			signaturedom.style.paddingBottom = clientY + 60 + 'px'
-
-			// small enough ? close settings
-			if (clientY > window.innerHeight - 100) {
-				toggleDisplay(settingsDom)
-			}
-		}
-
-		const dragzone = settingsDom.querySelector('#mobile-drag-zone')
-		dragzone?.addEventListener('touchstart', dragStart, { passive: false })
-		dragzone?.addEventListener('mousedown', dragStart)
-		dragzone?.addEventListener('touchend', dragEnd, { passive: false })
-		dragzone?.addEventListener('mouseup', dragEnd)
-
-		document.body?.addEventListener('mouseleave', (e) => {
-			if (settingsDom?.classList.contains('shown') && window.innerWidth < 600) {
-				dragEnd(e)
-			}
-		})
-	}
-
-	const DrawerDragDebounce = debounce(() => {
-		;(document.querySelector('.signature') as HTMLDivElement).style.removeProperty('padding')
-		responsiveSettingsHeightDrag()
-	}, 600)
-
-	window.addEventListener('resize', () => {
-		DrawerDragDebounce()
-
-		// removes transition to prevent weird movement when changing to mobile styling
-		// /!\ this is dependent on toggleDisplay() to remove inline styling /!\
-		if (!settingsDom.style.transition) {
-			settingsDom.style.transition = 'none'
-		}
-	})
-
-	responsiveSettingsHeightDrag()
+	domsettings?.style.removeProperty('transform')
+	domsettings?.style.removeProperty('transition')
+	domsettings?.style.removeProperty('--translate-y')
+	document.dispatchEvent(new Event('close-edit'))
 }
 
-function settingsMgmt() {
-	async function copyImportText(target: HTMLButtonElement) {
-		try {
-			const area = document.getElementById('area_export') as HTMLInputElement
-			await navigator.clipboard.writeText(area.value)
-			target.textContent = tradThis('Copied')
-			setTimeout(() => {
-				const domimport = document.getElementById('b_exportcopy')
-				if (domimport) {
-					domimport.textContent = tradThis('Copy text')
-				}
-			}, 1000)
-		} catch (err) {
-			console.error('Failed to copy: ', err)
-		}
-	}
-
-	async function exportAsFile() {
-		const a = document.getElementById('downloadfile')
-		if (!a) return
-
-		const date = new Date()
-		const data = ((await storage.sync.get()) as Sync) ?? {}
-		const zero = (n: number) => (n.toString().length === 1 ? '0' + n : n.toString())
-		const YYYYMMDD = date.toISOString().slice(0, 10)
-		const HHMMSS = `${zero(date.getHours())}_${zero(date.getMinutes())}_${zero(date.getSeconds())}`
-
-		const bytes = new TextEncoder().encode(orderedStringify(data))
-		const blob = new Blob([bytes], { type: 'application/json;charset=utf-8' })
-		const href = URL.createObjectURL(blob)
-
-		a.setAttribute('href', href)
-		a.setAttribute('download', `bonjourr-${data?.about?.version} ${YYYYMMDD} ${HHMMSS}.json`)
-		a.click()
-	}
-
-	function importAsText(string: string) {
-		const importtext = document.getElementById('b_importtext')
-
-		try {
-			parse(string)
-			importtext?.removeAttribute('disabled')
-		} catch (error) {
-			importtext?.setAttribute('disabled', '')
-		}
-	}
-
-	function importAsFile(target: HTMLInputElement) {
-		function decodeExportFile(str: string): Partial<Sync> {
-			let result = {}
-
-			try {
-				// Tries to decode base64 from previous versions
-				result = parse<Partial<Sync>>(atob(str)) ?? {}
-			} catch {
-				try {
-					// If base64 failed, parse raw string
-					result = parse<Partial<Sync>>(str) ?? {}
-				} catch (error) {
-					// If all failed, return empty object
-					result = {}
-				}
-			}
-
-			return result
-		}
-
-		if (!target.files || (target.files && target.files.length === 0)) {
-			return
-		}
-
-		const file = target.files[0]
-		const reader = new FileReader()
-
-		reader.onload = () => {
-			if (typeof reader.result !== 'string') return false
-
-			const importData = decodeExportFile(reader.result)
-
-			// data has at least one valid key from default sync storage => import
-			if (Object.keys(SYNC_DEFAULT).filter((key) => key in importData).length > 0) {
-				paramsImport(importData as Sync)
-			}
-		}
-		reader.readAsText(file)
-	}
-
-	return { exportAsFile, copyImportText, importAsText, importAsFile }
-}
-
-function changelogControl(settingsDom: HTMLElement) {
-	const domshowsettings = document.querySelector('#showSettings')
-	const domchangelog = settingsDom.querySelector('#changelogContainer')
-
-	if (!domchangelog) return
-
-	domchangelog.classList.toggle('shown', true)
-	domshowsettings?.classList.toggle('hasUpdated', true)
-
-	const dismiss = () => {
-		domshowsettings?.classList.toggle('hasUpdated', false)
-		domchangelog.className = 'dismissed'
-		localStorage.removeItem('hasUpdated')
-	}
-
-	const loglink = settingsDom.querySelector('#link') as HTMLAnchorElement
-	const logdismiss = settingsDom.querySelector('#log_dismiss') as HTMLButtonElement
-
-	loglink.onclick = () => dismiss()
-	logdismiss.onclick = () => dismiss()
-}
-
-function translatePlaceholders(settingsDom: HTMLElement | null) {
-	if (!settingsDom) {
-		return
-	}
-
+function translatePlaceholders() {
 	const cases = [
-		['#i_title', 'Name'],
-		['#i_greeting', 'Name'],
-		['#i_tabtitle', 'New tab'],
-		['#i_sbrequest', 'Search query: %s'],
-		['#i_sbplaceholder', 'Search'],
-		['#cssEditor', 'Type in your custom CSS'],
-		['#i_importtext', 'or paste as text'],
+		['i_title', 'Name'],
+		['i_greeting', 'Name'],
+		['i_tabtitle', 'New tab'],
+		['i_sbrequest', 'Search query: %s'],
+		['i_sbplaceholder', 'Search'],
+		['cssEditor', 'Type in your custom CSS'],
+		['i_importtext', 'or paste as text'],
+		['i_addlink-title', 'Title'],
+		['i_addlink-url', 'example.com'],
 	]
 
 	for (const [id, text] of cases) {
-		settingsDom.querySelector(id)?.setAttribute('placeholder', tradThis(text))
+		document.getElementById(id)?.setAttribute('placeholder', tradThis(text))
 	}
 }
 
@@ -1082,18 +732,24 @@ async function switchLangs(nextLang: Langs) {
 	const data = await storage.sync.get()
 	const local = await storage.local.get(['quotesCache', 'userQuoteSelection', 'lastWeather'])
 
+	if (local?.lastWeather) {
+		local.lastWeather.timestamp = 0
+		local.lastWeather.forecasted_timestamp = 0
+	}
+
 	data.lang = nextLang
 	clock(data)
-	weather({ sync: data })
+	weather({ sync: data, lastWeather: local.lastWeather })
 	quotes({ sync: data, local })
 	tabTitle(data.tabtitle)
-	notes(data.notes || null)
-	signature(document.getElementById('settings') as HTMLElement)
-	translatePlaceholders(document.getElementById('settings'))
+	notes(data.notes)
+	customFont(undefined, { lang: true })
+	settingsFooter()
+	translatePlaceholders()
 }
 
-function showall(val: boolean, event: boolean, settingsDom?: HTMLElement) {
-	;(settingsDom || document.getElementById('settings'))?.classList.toggle('all', val)
+function showall(val: boolean, event: boolean) {
+	document.getElementById('settings')?.classList.toggle('all', val)
 
 	if (event) {
 		storage.sync.set({ showall: val })
@@ -1130,44 +786,298 @@ async function selectBackgroundType(cat: string) {
 	storage.sync.set({ background_type: cat })
 }
 
-function signature(dom: HTMLElement) {
-	const spans = dom.querySelectorAll<HTMLSpanElement>('#rand span')
-	const as = dom.querySelectorAll<HTMLAnchorElement>('#rand a')
-	const us = [
-		{ href: 'https://victr.me/', name: 'Victor Azevedo' },
-		{ href: 'https://tahoe.be/', name: 'Tahoe Beetschen' },
-	]
+function settingsFooter() {
+	const one = document.querySelector<HTMLAnchorElement>('#signature-one')
+	const two = document.querySelector<HTMLAnchorElement>('#signature-two')
+	const donate = document.getElementById('donate')
+	const version = document.getElementById('version')
+	const rand = Math.random() > 0.5
 
-	if (Math.random() > 0.5) us.reverse()
+	if (one && two) {
+		one.href = rand ? 'https://victr.me/' : 'https://tahoe.be/'
+		two.href = rand ? 'https://tahoe.be/' : 'https://victr.me/'
+		one.textContent = rand ? 'Victor Azevedo' : 'Tahoe Beetschen'
+		two.textContent = rand ? 'Tahoe Beetschen' : 'Victor Azevedo'
+	}
 
-	spans[0].textContent = `${tradThis('by')} `
-	spans[1].textContent = ` & `
+	if (version) {
+		version.textContent = SYNC_DEFAULT.about.version
+	}
 
-	as.forEach((a, i) => {
-		a.href = us[i].href
-		a.textContent = us[i].name
-	})
-
-	const version = dom.querySelector('.version a')
-	if (version) version.textContent = SYNC_DEFAULT.about.version
-
-	// Remove donate text on safari because apple is evil
 	if (SYSTEM_OS === 'ios' || PLATFORM === 'safari') {
-		dom.querySelector('#rdv_website')?.remove()
+		donate?.remove()
 	}
 }
 
-function fadeOut() {
-	const dominterface = document.getElementById('interface') as HTMLElement
-	dominterface.click()
-	dominterface.style.transition = 'opacity .4s'
-	setTimeout(() => (dominterface.style.opacity = '0'))
-	setTimeout(() => location.reload(), 400)
+//
+//	Inputs tab accessibility
+//
+
+function controlOptionsTabFocus() {
+	optionsTabIndex()
+
+	for (const option of document.querySelectorAll('#settings .opt-hider')) {
+		option.addEventListener('input', function () {
+			setTimeout(() => optionsTabIndex(), 10)
+		})
+	}
 }
 
-async function paramsImport(toImport: Partial<Sync>) {
+function optionsTabIndex() {
+	const id = <T>(s: string): T | null => document.querySelector(`#${s}`) as T | null
+	const isAllSettings = id<HTMLInputElement>('i_showall')?.checked
+
+	const toggleTabindex = (parent: string, on: boolean = true) => {
+		document?.querySelectorAll(`${parent} :is(input,  select,  button,  a, textarea)`).forEach((dom) => {
+			on ? dom.removeAttribute('tabindex') : dom.setAttribute('tabindex', '-1')
+		})
+	}
+
+	// If showall, start by enabling .as fields
+	if (isAllSettings) {
+		toggleTabindex('.as', true)
+	}
+
+	// Then control if widgets are on or off
+	document.querySelectorAll('.dropdown').forEach((dom) => {
+		toggleTabindex('#' + dom.id, dom?.classList.contains('shown'))
+	})
+
+	// Disable all "all" settings if off
+	if (isAllSettings === false) {
+		toggleTabindex('.as', false)
+	}
+
+	// Toggle tooltips
+	document.querySelectorAll('.tooltiptext').forEach((dom) => {
+		toggleTabindex('.' + dom.classList[1], dom?.classList.contains('shown'))
+	})
+
+	// Toggle in-widgets hidden options
+	toggleTabindex('#analog_options', id<Element>('analog_options')?.classList.contains('shown'))
+	toggleTabindex('#digital_options', id<Element>('digital_options')?.classList.contains('shown'))
+	toggleTabindex('#searchbar_request', id<Element>('searchbar_request')?.classList.contains('shown'))
+	toggleTabindex('#weather_provider', id<Element>('weather_provider')?.classList.contains('shown'))
+	toggleTabindex('#quotes_userlist', id<Element>('quotes_userlist')?.classList.contains('shown'))
+	toggleTabindex('#import', id<Element>('import')?.classList.contains('shown'))
+	toggleTabindex('#export', id<Element>('export')?.classList.contains('shown'))
+	toggleTabindex('#sett_city', id<HTMLInputElement>('i_geol')?.checked === false)
+}
+
+//
+// 	Mobile settings drawer bar
+//
+
+function settingsDrawerBar() {
+	const drawerDragDebounce = debounce(() => {
+		;(document.getElementById('settings-footer') as HTMLDivElement).style.removeProperty('padding')
+		drawerDragEvents()
+	}, 600)
+
+	window.addEventListener('resize', () => {
+		drawerDragDebounce()
+
+		// removes transition to prevent weird movement when changing to mobile styling
+		// /!\ this is dependent on toggleSettingsMenu() to remove inline styling /!\
+		if (!document.getElementById('settings')?.style.transition) {
+			document.getElementById('settings')?.setAttribute('style', 'transition: none')
+		}
+	})
+
+	drawerDragEvents()
+}
+
+function drawerDragEvents() {
+	const settingsDom = document.getElementById('settings') as HTMLElement
+	let settingsVh = -75
+	let firstPos = 0
+	let startTouchY = 0
+
+	const dragzone = settingsDom.querySelector('#mobile-drag-zone')
+	dragzone?.addEventListener('touchstart', dragStart, { passive: false })
+	dragzone?.addEventListener('mousedown', dragStart)
+	dragzone?.addEventListener('touchend', dragEnd, { passive: false })
+	dragzone?.addEventListener('mouseup', dragEnd)
+
+	document.body?.addEventListener('mouseleave', (e) => {
+		if (settingsDom?.classList.contains('shown') && window.innerWidth < 600) {
+			dragEnd(e)
+		}
+	})
+
+	function dragStart(e: Event) {
+		e.preventDefault()
+
+		// Get mouse / touch y position
+		if (e.type === 'mousedown') startTouchY = (e as MouseEvent).clientY
+		if (e.type === 'touchstart') startTouchY = (e as TouchEvent).touches[0].clientY
+
+		// First time dragging, sets maximum y pos at which to block
+		if (firstPos === 0) firstPos = startTouchY
+
+		// prevent scroll when dragging
+		settingsDom.style.overflow = `clip`
+
+		// Add mouse / touch moves events
+		window.addEventListener('touchmove', dragMove)
+		window.addEventListener('mousemove', dragMove)
+	}
+
+	function dragMove(e: Event) {
+		let clientY: number = 0
+
+		// Get mouse / touch y position
+		if (e.type === 'mousemove') clientY = (e as MouseEvent).clientY
+		if (e.type === 'touchmove') clientY = (e as TouchEvent).touches[0].clientY
+
+		// element is below max height: move
+		if (clientY > 60) {
+			settingsVh = +(100 - (clientY / window.innerHeight) * 100).toFixed(2)
+			settingsDom.style.transform = `translateY(-${settingsVh}vh)`
+			settingsDom.style.transition = `transform .0s`
+		}
+	}
+
+	function dragEnd(e: Event) {
+		let clientY: number = 0
+
+		// Get mouse / touch y position
+		if (e.type === 'mouseup' || e.type === 'mouseleave') clientY = (e as MouseEvent).clientY
+		if (e.type === 'touchend') clientY = (e as TouchEvent).changedTouches[0].clientY
+
+		// Remove move events
+		window.removeEventListener('touchmove', dragMove)
+		window.removeEventListener('mousemove', dragMove)
+
+		// reset mouse / touch pos
+		startTouchY = 0
+
+		const footer = document.getElementById('settings-footer') as HTMLDivElement
+		footer.style.paddingBottom = 100 - Math.abs(settingsVh) + 'vh'
+
+		settingsDom.style.removeProperty('padding')
+		settingsDom.style.removeProperty('width')
+		settingsDom.style.removeProperty('overflow')
+
+		// small enough ? close settings
+		if (clientY > window.innerHeight - 100) {
+			toggleSettingsMenu()
+		}
+	}
+}
+
+//
+//	Settings management
+//
+
+function toggleSettingsManagement(toggled: boolean) {
+	document.getElementById('export')?.classList.toggle('shown', !toggled)
+	document.getElementById('import')?.classList.toggle('shown', toggled)
+	document.querySelector('.importexport-tabs')?.classList.toggle('toggled', toggled)
+}
+
+async function copyImportText(target: HTMLElement) {
+	try {
+		const pre = document.getElementById('export-data')
+		await navigator.clipboard.writeText(pre?.textContent ?? '{}')
+		target.textContent = tradThis('Copied')
+		setTimeout(() => {
+			const domimport = document.getElementById('b_exportcopy')
+			if (domimport) {
+				domimport.textContent = tradThis('Copy text')
+			}
+		}, 1000)
+	} catch (err) {
+		console.error('Failed to copy: ', err)
+	}
+}
+
+async function exportAsFile() {
+	const a = document.getElementById('downloadfile')
+	if (!a) return
+
+	const date = new Date()
+	const data = ((await storage.sync.get()) as Sync.Storage) ?? {}
+	const zero = (n: number) => (n.toString().length === 1 ? '0' + n : n.toString())
+	const YYYYMMDD = date.toISOString().slice(0, 10)
+	const HHMMSS = `${zero(date.getHours())}_${zero(date.getMinutes())}_${zero(date.getSeconds())}`
+
+	const bytes = new TextEncoder().encode(orderedStringify(data))
+	const blob = new Blob([bytes], { type: 'application/json;charset=utf-8' })
+	const href = URL.createObjectURL(blob)
+
+	a.setAttribute('href', href)
+	a.setAttribute('tabindex', '-1')
+	a.setAttribute('download', `bonjourr-${data?.about?.version} ${YYYYMMDD} ${HHMMSS}.json`)
+	a.click()
+}
+
+function importAsText(string: string) {
+	const importtext = document.getElementById('b_importtext')
+
+	try {
+		parse(string)
+		importtext?.removeAttribute('disabled')
+	} catch (error) {
+		importtext?.setAttribute('disabled', '')
+	}
+}
+
+function importAsFile(target: HTMLInputElement) {
+	function decodeExportFile(str: string): Partial<Sync.Storage> {
+		let result = {}
+
+		try {
+			// Tries to decode base64 from previous versions
+			result = parse<Partial<Sync.Storage>>(atob(str)) ?? {}
+		} catch {
+			try {
+				// If base64 failed, parse raw string
+				result = parse<Partial<Sync.Storage>>(str) ?? {}
+			} catch (error) {
+				// If all failed, return empty object
+				result = {}
+			}
+		}
+
+		return result
+	}
+
+	if (!target.files || (target.files && target.files.length === 0)) {
+		return
+	}
+
+	const file = target.files[0]
+	const reader = new FileReader()
+
+	reader.onload = () => {
+		if (typeof reader.result !== 'string') return false
+
+		const importData = decodeExportFile(reader.result)
+
+		// data has at least one valid key from default sync storage => import
+		if (Object.keys(SYNC_DEFAULT).filter((key) => key in importData).length > 0) {
+			paramsImport(importData as Sync.Storage)
+		}
+	}
+	reader.readAsText(file)
+}
+
+async function paramsImport(toImport: Partial<Sync.Storage>) {
 	try {
 		let data = await storage.sync.get()
+
+		// #308 - verify font subset before importing
+		if (toImport?.font?.system === false) {
+			const family = toImport?.font?.family
+			const lang = toImport?.lang
+			const correctSubset = await fontIsAvailableInSubset(lang, family)
+
+			if (correctSubset === false) {
+				toImport.font.family = ''
+			}
+		}
+
 		data = filterImports(data, toImport)
 
 		storage.sync.clear()
@@ -1184,7 +1094,7 @@ function paramsReset(action: 'yes' | 'no' | 'conf') {
 		storage.local.clear()
 
 		setTimeout(() => {
-			storage.sync.set({ ...SYNC_DEFAULT })
+			storage.sync.set({ ...getSyncDefaults() })
 			storage.local.set({ ...LOCAL_DEFAULT })
 			fadeOut()
 		}, 50)
@@ -1196,13 +1106,50 @@ function paramsReset(action: 'yes' | 'no' | 'conf') {
 	document.getElementById('reset_conf')?.classList.toggle('shown', action === 'conf')
 }
 
-export async function updateExportJSON(settingsDom: HTMLElement) {
-	const input = settingsDom.querySelector('#area_export') as HTMLInputElement
+export function updateExportJSON(data?: Sync.Storage) {
+	data ? updateTextArea(data) : storage.sync.get().then(updateTextArea)
 
-	settingsDom.querySelector('#importtext')?.setAttribute('disabled', '') // because cannot export same settings
+	function updateTextArea(data: Sync.Storage) {
+		const pre = document.getElementById('export-data')
 
-	const data = await storage.sync.get()
-	data.about.browser = PLATFORM
+		if (pre) {
+			data.about.browser = PLATFORM
+			pre.textContent = orderedStringify(data)
 
-	input.value = orderedStringify(data)
+			// const parser = new DOMParser()
+			// const highlight = highlightText(orderedStringify(data), 'json')
+			// const doc = parser.parseFromString(highlight, 'text/html')
+			// const nodes = Object.values(doc.body.childNodes)
+
+			// for (const node of nodes) {
+			// 	pre.appendChild(node)
+			// }
+		}
+	}
+}
+
+function fadeOut() {
+	const dominterface = document.getElementById('interface') as HTMLElement
+	dominterface.click()
+	dominterface.style.transition = 'opacity .4s'
+	setTimeout(() => (dominterface.style.opacity = '0'))
+	setTimeout(() => location.reload(), 400)
+}
+
+//
+//	Helpers
+//
+
+function paramId(str: string) {
+	return document.getElementById(str) as HTMLInputElement
+}
+
+function setCheckbox(id: string, cat: boolean) {
+	const checkbox = paramId(id) as HTMLInputElement
+	checkbox.checked = cat
+}
+
+function setInput(id: string, val: string | number) {
+	const input = paramId(id) as HTMLInputElement
+	input.value = typeof val === 'string' ? val : val?.toString()
 }
